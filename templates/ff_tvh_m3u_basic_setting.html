@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% include 'ff_tvh_m3u_basic_common_style.html' %}
+
+<div class="row">
+  <div class="col-sm-12">
+    <form id="setting">
+
+      {% if arg['page_sub'] == 'sync' %}
+        {% include 'ff_tvh_m3u_basic_sync.html' %}
+      {% elif arg['page_sub'] == 'm3u' %}
+        {% include 'ff_tvh_m3u_basic_m3u.html' %}
+      {% elif arg['page_sub'] == 'api' %}
+        {% include 'ff_tvh_m3u_basic_api.html' %}
+      {% endif %}
+
+    </form>
+  </div>
+</div>
+
+{% include 'ff_tvh_m3u_basic_common_script.html' %}
+
+{% endblock %}

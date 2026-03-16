@@ -1,0 +1,41 @@
+<div class="card mb-4">
+  <div class="card-header"><strong>API 안내</strong></div>
+  <div class="card-body">
+    <div class="ff-api-note">아래 링크를 복사해서 TVH 테스트용 또는 TiviMate용으로 사용할 수 있습니다. 기본 링크는 TiviMate용과 동일하게 동작합니다.</div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><strong>M3U API 링크</strong></div>
+  <div class="card-body">
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">TVH용</label>
+      <div class="col-sm-9">
+        <div class="input-group">
+          <a href="{{ arg['m3u_tvh_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_tvh_url'] }}</a>
+        </div>
+        <small class="form-text text-muted">TVHeadend 내부 확인용 링크</small>
+      </div>
+    </div>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">TiviMate용</label>
+      <div class="col-sm-9">
+        <div class="input-group">
+          <a href="{{ arg['m3u_tivimate_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_tivimate_url'] }}</a>
+        </div>
+        <small class="form-text text-muted">실사용 재생기 기본 링크</small>
+      </div>
+    </div>
+
+    <div class="form-group row" style="margin-bottom:0;">
+      <label class="col-sm-3 col-form-label">기본 링크</label>
+      <div class="col-sm-9">
+        <div class="input-group">
+          <a href="{{ arg['m3u_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_url'] }}</a>
+        </div>
+        <small class="form-text text-muted">기본 링크 = TiviMate용 링크</small>
+      </div>
+    </div>
+  </div>
+</div>
