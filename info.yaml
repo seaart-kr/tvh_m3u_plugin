@@ -1,6 +1,6 @@
 title: "TVH M3U Maker"
 version: "0.0.1"
-package_name: "ff_tvh_m3u"
+package_name: "tvh_m3u_plugin"
 developer: "kang"
 description: "TVHeadend channel groups to custom M3U for TiviMate"
 home: ""
