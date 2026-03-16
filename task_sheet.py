@@ -242,7 +242,7 @@ class TaskSheet(TaskBase):
             channel_name = TaskSheet._pick(row, ['이름', '채널명', 'name', 'Name'])
             aka_name = TaskSheet._pick(row, ['AKA', 'aka', '별칭', '별명'])
             group_name = TaskSheet._pick(row, ['그룹', '카테고리', 'group', 'category'])
-            logo_url = TaskSheet._pick(row, ['로고', 'logo', 'icon', 'tvg-logo'])
+            logo_url = TaskSheet._pick(row, ['웨이브 로고1', '웨이브 로고2', '로고', 'logo', 'icon', 'tvg-logo'])
             if group_name == '미사용':
                 continue
             if not channel_name and not aka_name:
