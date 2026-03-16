@@ -328,7 +328,7 @@ class ModuleBasic(PluginModuleBase):
             )
 
             return render_template(
-                f'{P.package_name}_{self.name}_setting.html',
+                'ff_tvh_m3u_basic_setting.html',
                 arg=arg
             )
 
