@@ -244,7 +244,7 @@ class ModuleBasic(PluginModuleBase):
         'basic_last_sync_count': '0',
         'basic_sheet_last_import_time': '',
         'basic_sheet_rclone_remote': 'gds',
-        'basic_sheet_file_id': '17Uq1cOokrZ4Ci0eQxs5_v6Ea8jKx3IPgTR1JudLR6tM',
+        'basic_sheet_file_id': '1MFQKx-gdW3CtZNX_mvjOneRpI15ApejiDcxR1ilWZeI',
         'basic_sheet_file_kind': 'google_sheet',
         'basic_sheet_selected_name': '',
         'basic_sheet_browse_path': '',
@@ -328,7 +328,7 @@ class ModuleBasic(PluginModuleBase):
             )
 
             return render_template(
-                'ff_tvh_m3u_basic_setting.html',
+                f'{P.package_name}_{self.name}_setting.html',
                 arg=arg
             )
 
