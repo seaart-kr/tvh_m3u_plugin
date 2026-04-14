@@ -113,7 +113,7 @@ class TaskSheet(TaskBase):
 
         if TaskSheet._table_exists(conn, 'custom_logo'):
             custom_cols = TaskSheet._get_columns(conn, 'custom_logo')
-            custom_fk_col = TaskSheet._pick_column(custom_cols, ['channel_master_id', 'master_id', 'cm_id'])
+            custom_fk_col = TaskSheet._pick_column(custom_cols, ['channel_master_id', 'master_id', 'cm_id', 'channel_id'])
             custom_name_col = TaskSheet._pick_column(custom_cols, ['standard_name', 'channel_name', 'name', 'title'])
             custom_logo_col = TaskSheet._pick_column(custom_cols, ['logo_url', 'custom_logo_url', 'url', 'path', 'logo'])
 
