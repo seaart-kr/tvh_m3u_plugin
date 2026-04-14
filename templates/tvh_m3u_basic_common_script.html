@@ -3,6 +3,14 @@ var package_name = "{{arg['package_name']}}";
 var page_sub = "{{arg['page_sub']}}";
 var ajax_sub = "{{arg['ajax_sub']}}";
 
+function showInnerTab(target) {
+  $('.ff-inner-tab-btn').removeClass('active');
+  $('.ff-inner-tab-pane').removeClass('active');
+  $('.ff-inner-tab-btn[data-target="' + target + '"]').addClass('active');
+  $(target).addClass('active');
+  if (window.location.hash !== target) window.location.hash = target;
+}
+
 function toggleGroupCard($card) {
   if ($card.hasClass('expanded')) {
     $card.removeClass('expanded');
@@ -30,12 +38,9 @@ function clearButtonLoading($btn) {
 function setPlayProfileOptions(profiles, selectedValue) {
   var $select = $('#play_profile_select');
   if ($select.length === 0) return;
-
   $select.empty();
   $select.append('<option value="">선택하세요</option>');
-
   if (!profiles || profiles.length === 0) return;
-
   profiles.forEach(function(name) {
     var opt = $('<option></option>').attr('value', name).text(name);
     if (selectedValue && selectedValue === name) opt.prop('selected', true);
@@ -74,49 +79,47 @@ function resolveGroupPayload(selectValue, newValue) {
   };
 }
 
-function isAutoMatchEnabled() {
-  var $el = $('#basic_channel_auto_match');
-  if ($el.length === 0) $el = $('[name="basic_channel_auto_match"]');
-  return $el.length > 0 && $el.is(':checked');
-}
-
-function updateAutoMatchSection() {
-  var enabled = isAutoMatchEnabled();
-  if (enabled) {
-    $('#auto_match_control_wrap').show();
-  } else {
-    $('#auto_match_control_wrap').hide();
-  }
-}
-
-function populateRcloneRemotes(remotes) {
-  var $select = $('#basic_sheet_rclone_remote');
-  if ($select.length === 0) return;
-  var current = ($select.val() || '').trim();
-  $select.empty();
-  if (!remotes || remotes.length === 0) {
-    $select.append('<option value="">알클론 드라이브 선택</option>');
-    return;
-  }
-  remotes.forEach(function(name) {
-    var $opt = $('<option></option>').attr('value', name).text(name);
-    if (current && current === name) $opt.prop('selected', true);
-    $select.append($opt);
+function runPreviewM3u($btn, loadingText) {
+  if ($btn && $btn.length) setButtonLoading($btn, loadingText || '생성중');
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/preview_m3u',
+    type: 'POST',
+    cache: false,
+    data: $('#setting').serialize(),
+    dataType: 'json',
+    success: function(ret) {
+      if (ret.preview != null) {
+        $('#m3u_preview').text(ret.preview);
+      } else {
+        $('#m3u_preview').text('preview is null');
+      }
+      if (ret.msg != null) notify(ret.msg, ret.ret);
+    },
+    error: function(xhr) {
+      $('#m3u_preview').text('AJAX ERROR\n' + xhr.responseText);
+      notify('미리보기 요청 실패', 'danger');
+    },
+    complete: function() {
+      if ($btn && $btn.length) clearButtonLoading($btn);
+    }
   });
-  if (current && remotes.indexOf(current) < 0) {
-    $select.prepend($('<option></option>').attr('value', current).text(current).prop('selected', true));
-  }
 }
 
 $(document).ready(function(){
-  updateAutoMatchSection();
+  var hash = window.location.hash || '#ff_tab_tvh';
+  if ($(hash).length === 0) hash = '#ff_tab_tvh';
+  showInnerTab(hash);
+
+  var currentProfile = $('#basic_tvh_stream_profile').val() || '';
+  if (currentProfile) $('#play_profile_select').val(currentProfile);
 });
 
-$("body").on('change', '#basic_channel_auto_match', function(){
-  updateAutoMatchSection();
+$("body").on('click', '.ff-inner-tab-btn', function(e){
+  e.preventDefault();
+  showInnerTab($(this).data('target'));
 });
 
-$("body").on('click', '#manual_save_btn', function(e){
+$("body").on('click', '#manual_save_btn_tvh, #manual_save_btn_match', function(e){
   e.preventDefault();
   var $btn = $(this);
   setButtonLoading($btn, '저장중');
@@ -164,22 +167,28 @@ $("body").on('click', '#test_admin_login_btn', function(e){
   });
 });
 
-$("body").on('click', '#load_rclone_remotes_btn', function(e){
+$("body").on('click', '#test_play_login_btn', function(e){
   e.preventDefault();
   var $btn = $(this);
-  setButtonLoading($btn, '조회중');
+  setButtonLoading($btn, '확인중');
 
   $.ajax({
-    url: '/' + package_name + '/ajax/' + ajax_sub + '/load_rclone_remotes',
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/test_play_login',
     type: 'POST',
     cache: false,
+    data: $('#setting').serialize(),
     dataType: 'json',
     success: function(ret) {
       if (ret.msg != null) notify(ret.msg, ret.ret);
-      if (ret.ret === 'success') populateRcloneRemotes(ret.remotes || []);
+      renderPlayLoginResult(ret);
+      if (ret.profiles != null) {
+        var currentProfile = $('#basic_tvh_stream_profile').val() || '';
+        setPlayProfileOptions(ret.profiles, currentProfile);
+      }
     },
-    error: function() {
-      notify('알클론 드라이브 목록 조회 실패', 'danger');
+    error: function(xhr) {
+      $('#play_login_result').text('AJAX ERROR\n' + xhr.responseText);
+      notify('재생 계정 확인 요청 실패', 'danger');
     },
     complete: function() {
       clearButtonLoading($btn);
@@ -187,28 +196,25 @@ $("body").on('click', '#load_rclone_remotes_btn', function(e){
   });
 });
 
-$("body").on('click', '#match_sheet_channels_btn', function(e){
+$("body").on('click', '#load_play_profiles_btn', function(e){
   e.preventDefault();
-  if (!isAutoMatchEnabled()) {
-    notify('채널 자동분배를 먼저 켜세요.', 'warning');
-    return;
-  }
-
   var $btn = $(this);
-  setButtonLoading($btn, '매칭중');
-
+  setButtonLoading($btn, '조회중');
   $.ajax({
-    url: '/' + package_name + '/ajax/' + ajax_sub + '/match_sheet_channels',
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/load_play_profiles',
     type: 'POST',
     cache: false,
     data: $('#setting').serialize(),
     dataType: 'json',
     success: function(ret) {
       if (ret.msg != null) notify(ret.msg, ret.ret);
-      if (ret.ret === 'success') setTimeout(function(){ location.reload(); }, 500);
+      if (ret.profiles != null) {
+        var currentProfile = $('#basic_tvh_stream_profile').val() || '';
+        setPlayProfileOptions(ret.profiles, currentProfile);
+      }
     },
     error: function() {
-      notify('채널 매칭 요청 실패', 'danger');
+      notify('프로필 목록 조회 실패', 'danger');
     },
     complete: function() {
       clearButtonLoading($btn);
@@ -229,10 +235,38 @@ $("body").on('click', '#sync_channels_btn', function(e){
     dataType: 'json',
     success: function(ret) {
       if (ret.msg != null) notify(ret.msg, ret.ret);
-      if (ret.ret === 'success') setTimeout(function(){ location.reload(); }, 800);
+      if (ret.ret === 'success' || ret.ret === 'warning') {
+        setTimeout(function(){ location.reload(); }, 800);
+      }
     },
     error: function() {
       notify('채널 동기화 요청 실패', 'danger');
+    },
+    complete: function() {
+      clearButtonLoading($btn);
+    }
+  });
+});
+
+$("body").on('click', '#apply_db_rules_btn', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  setButtonLoading($btn, '실행중');
+
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/apply_db_rules',
+    type: 'POST',
+    cache: false,
+    data: $('#setting').serialize(),
+    dataType: 'json',
+    success: function(ret) {
+      if (ret.msg != null) notify(ret.msg, ret.ret);
+      if (ret.ret === 'success' || ret.ret === 'warning') {
+        setTimeout(function(){ location.reload(); }, 500);
+      }
+    },
+    error: function() {
+      notify('기준 DB 매칭 실행 실패', 'danger');
     },
     complete: function() {
       clearButtonLoading($btn);
@@ -425,62 +459,6 @@ $("body").on('dblclick', '.ff-group-toggle-target', function(e){
   toggleGroupCard($(this).closest('.ff-group-card'));
 });
 
-$("body").on('click', '#test_play_login_btn', function(e){
-  e.preventDefault();
-  var $btn = $(this);
-  setButtonLoading($btn, '확인중');
-
-  $.ajax({
-    url: '/' + package_name + '/ajax/' + ajax_sub + '/test_play_login',
-    type: 'POST',
-    cache: false,
-    data: $('#setting').serialize(),
-    dataType: 'json',
-    success: function(ret) {
-      if (ret.msg != null) notify(ret.msg, ret.ret);
-      renderPlayLoginResult(ret);
-      if (ret.profiles != null) {
-        var currentProfile = $('#basic_tvh_stream_profile').val() || '';
-        setPlayProfileOptions(ret.profiles, currentProfile);
-      }
-    },
-    error: function(xhr) {
-      $('#play_login_result').text('AJAX ERROR\n' + xhr.responseText);
-      notify('재생 계정 확인 요청 실패', 'danger');
-    },
-    complete: function() {
-      clearButtonLoading($btn);
-    }
-  });
-});
-
-function runPreviewM3u($btn, loadingText) {
-  if ($btn && $btn.length) setButtonLoading($btn, loadingText || '생성중');
-
-  $.ajax({
-    url: '/' + package_name + '/ajax/' + ajax_sub + '/preview_m3u',
-    type: 'POST',
-    cache: false,
-    data: $('#setting').serialize(),
-    dataType: 'json',
-    success: function(ret) {
-      if (ret.preview != null) {
-        $('#m3u_preview').text(ret.preview);
-      } else {
-        $('#m3u_preview').text('preview is null');
-      }
-      if (ret.msg != null) notify(ret.msg, ret.ret);
-    },
-    error: function(xhr) {
-      $('#m3u_preview').text('AJAX ERROR\n' + xhr.responseText);
-      notify('미리보기 요청 실패', 'danger');
-    },
-    complete: function() {
-      if ($btn && $btn.length) clearButtonLoading($btn);
-    }
-  });
-}
-
 $("body").on('click', '#apply_play_profile_btn', function(e){
   e.preventDefault();
   var $btn = $(this);
@@ -493,11 +471,6 @@ $("body").on('click', '#apply_play_profile_btn', function(e){
   $('#current_applied_profile_text').text(selectedProfile);
   notify('일괄 프로필을 적용했습니다. M3U 미리보기를 실행합니다.', 'success');
   runPreviewM3u($btn, '적용중');
-});
-
-$(document).ready(function(){
-  var currentProfile = $('#basic_tvh_stream_profile').val() || '';
-  if (currentProfile) $('#play_profile_select').val(currentProfile);
 });
 
 $("body").on('click', '.apply-group-profile-btn', function(e){
