@@ -188,6 +188,34 @@ $("body").on('click', '#apply_db_rules_btn', function(e){
   });
 });
 
+$("body").on('click', '#reset_plugin_db_btn', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  if (!confirm('플러그인 DB를 초기화할까요?\n\n채널/태그/그룹순서/수동지정/프로필/매칭 반영값이 모두 비워집니다.\n기준 DB(ff_tvh_sheet_write.db)는 유지됩니다.')) {
+    return;
+  }
+  setButtonLoading($btn, '초기화중');
+
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/reset_plugin_db',
+    type: 'POST',
+    cache: false,
+    dataType: 'json',
+    success: function(ret) {
+      if (ret.msg != null) notify(ret.msg, ret.ret);
+      if (ret.ret === 'success') {
+        setTimeout(function(){ location.reload(); }, 500);
+      }
+    },
+    error: function() {
+      notify('플러그인 DB 초기화 실패', 'danger');
+    },
+    complete: function() {
+      clearButtonLoading($btn);
+    }
+  });
+});
+
 $("body").on('click', '#select_all_ungrouped_btn', function(e){
   e.preventDefault();
   var $checks = $('.ungrouped-channel-check');
