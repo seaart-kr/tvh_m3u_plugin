@@ -347,6 +347,16 @@ class ModuleBasic(PluginModuleBase):
                 _save_runtime_settings(req)
                 return jsonify(Task.apply_db_rules())
 
+            elif sub == 'search_match_channel':
+                keyword = request.form.get('keyword')
+                limit = request.form.get('limit', 30)
+                return jsonify(Task.search_master_channels(keyword, limit=limit))
+
+            elif sub == 'add_db_match_channel':
+                channel_uuid = request.form.get('channel_uuid')
+                channel_id = request.form.get('channel_id')
+                return jsonify(Task.add_db_match_channel(channel_uuid, channel_id))
+
             elif sub == 'move_group':
                 group_name = request.form.get('group_name')
                 direction = request.form.get('direction')

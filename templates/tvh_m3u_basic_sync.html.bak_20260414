@@ -71,58 +71,57 @@
       <div class="ff-ungrouped-list" style="max-height:540px; overflow-y:auto; margin-top:12px;">
         {% for ch in arg['ungrouped_channels'] %}
           <label class="ff-ungrouped-item">
-            <input type="checkbox" class="ungrouped-channel-check" value="{{ ch.channel_uuid }}">
+            <input type="checkbox" class="ungrouped-channel-check" value="{{ ch.channel_uuid }}" data-channel-name="{{ ch.name|e }}" data-channel-number="{{ ch.number }}">
             [{{ ch.number }}] {{ ch.name }} / {{ ch.channel_uuid }}
           </label>
         {% endfor %}
-      </div>
-
-      <div class="card mt-3">
-        <div class="card-header"><strong>DB에 매칭채널 추가</strong></div>
-        <div class="card-body">
-          <div class="ff-mini-note">선택한 그룹 미지정 채널명을 기준으로 표준 채널을 검색하고, 맞는 표준 채널을 선택한 뒤 현재 채널명을 DB에 매칭채널로 추가합니다.</div>
-          <div class="ff-mini-note text-muted" style="margin-top:6px;">매칭이 안되는 채널은 다른 채널명으로 검색하세요.</div>
-
-          <div class="ff-action-btn-row mt-3">
-            <button type="button" class="btn btn-outline-secondary" id="load_selected_channel_btn">선택 채널명 불러오기</button>
-          </div>
-
-          <div class="ff-fixed-box" style="margin-top:10px;">
-            <div>선택 채널: <strong id="selected_ungrouped_channel_name">-</strong></div>
-            <div>채널 UUID: <code id="selected_ungrouped_channel_uuid">-</code></div>
-          </div>
-
-          <div class="ff-ungrouped-toolbar" style="margin-top:12px;">
-            <input type="text" id="match_search_keyword" class="form-control" placeholder="표준 채널 검색어">
-            <button type="button" class="btn btn-primary" id="search_match_channel_btn">표준 채널 검색</button>
-          </div>
-
-          <div id="match_search_result_msg" class="ff-mini-note" style="margin-top:10px;"></div>
-
-          <div class="ff-ungrouped-list" id="match_search_result_list" style="max-height:260px; overflow-y:auto; margin-top:10px; border:1px solid #e5e7eb; border-radius:8px; padding:8px;">
-            <div class="text-muted">검색 결과가 여기에 표시됩니다.</div>
-          </div>
-
-          <div class="ff-fixed-box" style="margin-top:12px;">
-            <div>선택한 표준 채널: <strong id="selected_master_channel_name">-</strong></div>
-            <div>표준 채널 ID: <code id="selected_master_channel_id">-</code></div>
-            <div>그룹: <strong id="selected_master_group_name">-</strong></div>
-          </div>
-
-          <div class="ff-action-btn-row mt-3">
-            <label style="display:flex; align-items:center; gap:8px; margin:0;">
-              <input type="checkbox" id="auto_reapply_after_add" checked>
-              <span>추가 후 자동 재매칭</span>
-            </label>
-            <button type="button" class="btn btn-success" id="add_db_match_channel_btn">DB에 매칭채널 추가</button>
-          </div>
-        </div>
       </div>
     {% else %}
       <div>그룹 미지정 채널이 없습니다.</div>
     {% endif %}
   </div>
 </div>
+
+<div class="card mb-4">
+  <div class="card-header"><strong>쓰기 플러그인 AKA 보강</strong></div>
+  <div class="card-body">
+    <div class="ff-mini-note" style="margin-bottom:12px;">
+      미매칭 또는 그룹 미지정 채널명을 기준으로 <code>ff_tvh_sheet_write</code> 의 표준 채널을 검색하고,
+      선택한 표준 채널에 AKA 를 추가할 수 있습니다. 저장 후 자동 재매칭도 가능합니다.
+    </div>
+
+    <div class="ff-ungrouped-toolbar">
+      <input type="text" id="write_api_key" class="form-control" placeholder="쓰기 플러그인 API Key">
+      <input type="text" id="write_api_base" class="form-control" value="/ff_tvh_sheet_write/api/basic" placeholder="쓰기 플러그인 API Base">
+      <button type="button" class="btn btn-outline-secondary" id="load_selected_unmatched_name_btn">선택 채널명 불러오기</button>
+    </div>
+
+    <div class="ff-ungrouped-toolbar" style="margin-top:10px;">
+      <input type="text" id="write_alias_channel_name" class="form-control" placeholder="AKA 로 추가할 채널명">
+      <button type="button" class="btn btn-primary" id="search_write_master_btn">표준 채널 검색</button>
+      <button type="button" class="btn btn-success" id="add_alias_from_m3u_btn">AKA 추가</button>
+    </div>
+
+    <div class="ff-input-priority-note">
+      API Key 와 Base 값은 브라우저에 저장됩니다. 기본 Base 는 <code>/ff_tvh_sheet_write/api/basic</code> 입니다.
+    </div>
+
+    <div class="form-check" style="margin-top:8px;">
+      <input class="form-check-input" type="checkbox" id="auto_reapply_after_alias" checked>
+      <label class="form-check-label" for="auto_reapply_after_alias">AKA 추가 후 기준 DB 매칭 자동 재실행</label>
+    </div>
+
+    <div class="ff-fixed-box" style="margin-top:12px;">
+      <div>선택 표준 채널 ID: <strong id="selected_write_master_id">-</strong></div>
+      <div>선택 표준 채널명: <strong id="selected_write_master_name">-</strong></div>
+      <div>선택 그룹 카테고리: <strong id="selected_write_master_group">-</strong></div>
+    </div>
+
+    <div id="write_master_search_result" class="ff-fixed-box" style="margin-top:12px; min-height:80px; white-space:normal;">검색 결과가 여기에 표시됩니다.</div>
+    <div id="write_alias_action_result" class="ff-result-box" style="margin-top:12px;"></div>
+  </div>
+</div>
+
 
 <div class="card mb-4">
   <div class="card-header"><strong>채널 / 그룹 리스트</strong></div>

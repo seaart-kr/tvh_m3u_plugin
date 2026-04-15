@@ -13,15 +13,6 @@ function toggleGroupCard($card) {
   }
 }
 
-function escapeHtml(text) {
-  return String(text || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 function setButtonLoading($btn, loadingText) {
   if (!$btn || $btn.length === 0) return;
   if (!$btn.data('original-text')) $btn.data('original-text', $btn.html());
@@ -451,142 +442,193 @@ $("body").on('click', '.apply-channel-profile-btn', function(e){
   });
 });
 
-function getSelectedUngroupedChannel() {
-  var $checked = $('.ungrouped-channel-check:checked');
-  if ($checked.length === 0) return null;
-  if ($checked.length > 1) {
-    notify('하나의 채널만 선택해서 진행하세요.', 'warning');
-    return null;
-  }
-  var $label = $checked.closest('label');
-  var text = $.trim($label.text());
-  var uuid = $checked.val();
-  var nameText = text;
-  var parts = text.split('] ');
-  if (parts.length > 1) nameText = parts.slice(1).join('] ');
-  nameText = nameText.replace(/\s*\/\s*[^/]+$/, '').trim();
-  return {channel_uuid: uuid, channel_name: nameText};
+
+function getWriteApiConfig() {
+  var apiKey = ($('#write_api_key').val() || '').trim();
+  var apiBase = ($('#write_api_base').val() || '').trim();
+  if (apiBase.endsWith('/')) apiBase = apiBase.slice(0, -1);
+  return { apiKey: apiKey, apiBase: apiBase };
 }
 
-function renderMatchSearchResults(items) {
-  var $wrap = $('#match_search_result_list');
-  $wrap.empty();
-  if (!items || items.length === 0) {
-    $wrap.html('<div class="text-muted">검색 결과가 없습니다. 다른 채널명으로 다시 검색하세요.</div>');
+function saveWriteApiConfig() {
+  try {
+    localStorage.setItem('ff_tvh_write_api_key', $('#write_api_key').val() || '');
+    localStorage.setItem('ff_tvh_write_api_base', $('#write_api_base').val() || '/ff_tvh_sheet_write/api/basic');
+  } catch (e) {}
+}
+
+function loadWriteApiConfig() {
+  try {
+    var savedKey = localStorage.getItem('ff_tvh_write_api_key') || '';
+    var savedBase = localStorage.getItem('ff_tvh_write_api_base') || '/ff_tvh_sheet_write/api/basic';
+    if ($('#write_api_key').length) $('#write_api_key').val(savedKey);
+    if ($('#write_api_base').length) $('#write_api_base').val(savedBase);
+  } catch (e) {}
+}
+
+function resetSelectedWriteMaster() {
+  $('#selected_write_master_id').text('-');
+  $('#selected_write_master_name').text('-');
+  $('#selected_write_master_group').text('-');
+  $('#add_alias_from_m3u_btn').data('channel-id', '');
+}
+
+function setSelectedWriteMaster(item) {
+  $('#selected_write_master_id').text(item.id || '-');
+  $('#selected_write_master_name').text(item.standard_name || '-');
+  $('#selected_write_master_group').text(item.group_category || '-');
+  $('#add_alias_from_m3u_btn').data('channel-id', item.id || '');
+}
+
+function renderWriteMasterSearchResult(ret) {
+  if (!ret || !ret.list || ret.list.length === 0) {
+    $('#write_master_search_result').html('검색 결과가 없습니다.');
+    resetSelectedWriteMaster();
     return;
   }
-  items.forEach(function(item){
-    var row = '' +
-      '<div class="ff-search-result-item" style="display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 6px; border-bottom:1px solid #f0f0f0;">' +
-        '<div>' +
-          '<div><strong>' + escapeHtml(item.standard_name || '') + '</strong></div>' +
-          '<div class="text-muted" style="font-size:12px;">ID: ' + escapeHtml(item.channel_id || '') + ' / 그룹: ' + escapeHtml(item.group_name || '') + '</div>' +
-        '</div>' +
-        '<div><button type="button" class="btn btn-sm btn-outline-primary btn-select-master-channel" data-channel-id="' + escapeHtml(item.channel_id || '') + '" data-standard-name="' + escapeHtml(item.standard_name || '') + '" data-group-name="' + escapeHtml(item.group_name || '') + '">선택</button></div>' +
-      '</div>';
-    $wrap.append(row);
+
+  var html = [];
+  html.push('<div style="margin-bottom:8px; font-weight:600;">검색 결과 ' + ret.list.length + '건</div>');
+  html.push('<div style="overflow-x:auto;">');
+  html.push('<table class="table table-sm table-bordered" style="margin-bottom:0; background:#fff;">');
+  html.push('<thead><tr><th>ID</th><th>표준 채널명</th><th>그룹</th><th>선택</th></tr></thead><tbody>');
+
+  $.each(ret.list, function(idx, item){
+    html.push('<tr>');
+    html.push('<td>' + (item.id || '') + '</td>');
+    html.push('<td>' + (item.standard_name || '') + '</td>');
+    html.push('<td>' + (item.group_category || '') + '</td>');
+    html.push('<td><button type="button" class="btn btn-sm btn-primary btn-select-write-master" data-channel-id="' + (item.id || '') + '" data-standard-name="' + (item.standard_name || '') + '" data-group-category="' + (item.group_category || '') + '">선택</button></td>');
+    html.push('</tr>');
   });
+
+  html.push('</tbody></table></div>');
+  $('#write_master_search_result').html(html.join(''));
 }
 
-$("body").on('click', '#load_selected_channel_btn', function(e){
-  e.preventDefault();
-  var selected = getSelectedUngroupedChannel();
-  if (!selected) {
-    notify('그룹 미지정 채널에서 하나를 선택하세요.', 'warning');
-    return;
-  }
-  $('#selected_ungrouped_channel_name').text(selected.channel_name || '-');
-  $('#selected_ungrouped_channel_uuid').text(selected.channel_uuid || '-');
-  $('#match_search_keyword').val(selected.channel_name || '');
-  $('#match_search_result_msg').text('');
+function getSelectedUnmatchedChannelName() {
+  var $checked = $('.ungrouped-channel-check:checked').first();
+  if ($checked.length === 0) return '';
+  return ($checked.data('channel-name') || '').toString().trim();
+}
+
+$(document).ready(function(){
+  loadWriteApiConfig();
+  resetSelectedWriteMaster();
 });
 
-$("body").on('click', '#search_match_channel_btn', function(e){
+$('body').on('change', '#write_api_key, #write_api_base', function(){
+  saveWriteApiConfig();
+});
+
+$('body').on('click', '#load_selected_unmatched_name_btn', function(e){
+  e.preventDefault();
+  var name = getSelectedUnmatchedChannelName();
+  if (!name) {
+    notify('그룹 미지정 채널에서 체크된 항목이 없습니다.', 'warning');
+    return;
+  }
+  $('#write_alias_channel_name').val(name);
+  resetSelectedWriteMaster();
+  notify('선택 채널명을 불러왔습니다: ' + name, 'success');
+});
+
+$('body').on('click', '#search_write_master_btn', function(e){
   e.preventDefault();
   var $btn = $(this);
-  var keyword = $.trim($('#match_search_keyword').val() || '');
+  var cfg = getWriteApiConfig();
+  var keyword = ($('#write_alias_channel_name').val() || '').trim();
+
+  if (!cfg.apiKey) {
+    notify('쓰기 플러그인 API Key 를 입력하세요.', 'warning');
+    return;
+  }
+  if (!cfg.apiBase) {
+    notify('쓰기 플러그인 API Base 를 입력하세요.', 'warning');
+    return;
+  }
   if (!keyword) {
-    notify('검색어를 입력하세요.', 'warning');
+    notify('검색할 채널명을 입력하세요.', 'warning');
     return;
   }
+
+  saveWriteApiConfig();
   setButtonLoading($btn, '검색중');
+
   $.ajax({
-    url: '/' + package_name + '/ajax/' + ajax_sub + '/search_match_channel',
-    type: 'POST',
+    url: cfg.apiBase + '/search_master',
+    type: 'GET',
     cache: false,
     dataType: 'json',
-    data: {keyword: keyword, limit: 30},
+    data: { apikey: cfg.apiKey, keyword: keyword },
     success: function(ret) {
-      if (ret.msg != null) $('#match_search_result_msg').text(ret.msg);
-      renderMatchSearchResults(ret.list || []);
       if (ret.msg != null) notify(ret.msg, ret.ret);
+      renderWriteMasterSearchResult(ret);
     },
-    error: function() {
-      notify('표준 채널 검색 실패', 'danger');
+    error: function(xhr) {
+      $('#write_master_search_result').text('API ERROR\n' + (xhr.responseText || ''));
+      notify('쓰기 플러그인 표준 채널 검색 실패', 'danger');
     },
-    complete: function() {
-      clearButtonLoading($btn);
-    }
+    complete: function(){ clearButtonLoading($btn); }
   });
 });
 
-$("body").on('click', '.btn-select-master-channel', function(e){
+$('body').on('click', '.btn-select-write-master', function(e){
   e.preventDefault();
-  var $btn = $(this);
-  $('#selected_master_channel_name').text($btn.data('standard-name') || '-');
-  $('#selected_master_channel_id').text($btn.data('channel-id') || '-');
-  $('#selected_master_group_name').text($btn.data('group-name') || '-');
-  notify('표준 채널을 선택했습니다.', 'success');
+  var item = {
+    id: ($(this).data('channel-id') || '').toString(),
+    standard_name: ($(this).data('standard-name') || '').toString(),
+    group_category: ($(this).data('group-category') || '').toString()
+  };
+  setSelectedWriteMaster(item);
+  notify('표준 채널을 선택했습니다: ' + item.standard_name, 'success');
 });
 
-$("body").on('click', '#add_db_match_channel_btn', function(e){
+$('body').on('click', '#add_alias_from_m3u_btn', function(e){
   e.preventDefault();
   var $btn = $(this);
-  var selected = getSelectedUngroupedChannel();
-  var channelId = $.trim($('#selected_master_channel_id').text() || '');
-  if (!selected) {
-    notify('그룹 미지정 채널에서 하나를 선택하세요.', 'warning');
+  var cfg = getWriteApiConfig();
+  var channelId = ($btn.data('channel-id') || '').toString().trim();
+  var aliasName = ($('#write_alias_channel_name').val() || '').trim();
+
+  if (!cfg.apiKey) {
+    notify('쓰기 플러그인 API Key 를 입력하세요.', 'warning');
     return;
   }
-  if (!channelId || channelId === '-') {
-    notify('표준 채널을 먼저 선택하세요.', 'warning');
+  if (!cfg.apiBase) {
+    notify('쓰기 플러그인 API Base 를 입력하세요.', 'warning');
     return;
   }
+  if (!channelId) {
+    notify('먼저 표준 채널을 선택하세요.', 'warning');
+    return;
+  }
+  if (!aliasName) {
+    notify('AKA 로 추가할 채널명이 비어 있습니다.', 'warning');
+    return;
+  }
+
+  saveWriteApiConfig();
   setButtonLoading($btn, '추가중');
+
   $.ajax({
-    url: '/' + package_name + '/ajax/' + ajax_sub + '/add_db_match_channel',
-    type: 'POST',
+    url: cfg.apiBase + '/add_alias',
+    type: 'GET',
     cache: false,
     dataType: 'json',
-    data: {channel_uuid: selected.channel_uuid, channel_id: channelId},
+    data: { apikey: cfg.apiKey, channel_id: channelId, alias_name: aliasName },
     success: function(ret) {
+      $('#write_alias_action_result').text(JSON.stringify(ret, null, 2));
       if (ret.msg != null) notify(ret.msg, ret.ret);
-      if ((ret.ret === 'success' || ret.ret === 'warning') && $('#auto_reapply_after_add').is(':checked')) {
-        $.ajax({
-          url: '/' + package_name + '/ajax/' + ajax_sub + '/apply_db_rules',
-          type: 'POST',
-          cache: false,
-          data: $('#setting').serialize(),
-          dataType: 'json',
-          success: function(matchRet) {
-            if (matchRet.msg != null) notify(matchRet.msg, matchRet.ret);
-            setTimeout(function(){ location.reload(); }, 500);
-          },
-          error: function() {
-            notify('자동 재매칭 실패', 'danger');
-          },
-          complete: function() {
-            clearButtonLoading($btn);
-          }
-        });
-      } else {
-        clearButtonLoading($btn);
+      if ((ret.ret === 'success' || ret.ret === 'warning') && $('#auto_reapply_after_alias').is(':checked')) {
+        setTimeout(function(){ $('#apply_db_rules_btn').trigger('click'); }, 300);
       }
     },
-    error: function() {
-      notify('DB에 매칭채널 추가 실패', 'danger');
-      clearButtonLoading($btn);
-    }
+    error: function(xhr) {
+      $('#write_alias_action_result').text('API ERROR\n' + (xhr.responseText || ''));
+      notify('쓰기 플러그인 AKA 추가 실패', 'danger');
+    },
+    complete: function(){ clearButtonLoading($btn); }
   });
 });
 
