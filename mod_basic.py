@@ -5,12 +5,8 @@ import sys
 from flask import request, render_template, jsonify, redirect, Response, render_template_string
 
 from .setup import *
-from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, ModelChannelProfile, ModelSheetRule, DB_PATH
+from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, ModelChannelProfile, DB_PATH
 from .task import Task
-
-
-def _is_true_text(value):
-    return str(value or '').strip().lower() in ['true', 'on', '1', 'yes', 'y']
 
 
 def _is_sync_form(req):
@@ -23,55 +19,28 @@ def _is_sync_form(req):
             'basic_tvh_stream_base',
             'basic_tvh_admin_username',
             'basic_tvh_admin_password',
-            'basic_sheet_rclone_remote',
-            'basic_sheet_file_id',
-            'basic_sheet_file_kind',
-            'basic_sheet_selected_name',
-            'basic_sheet_browse_path',
-            'basic_channel_auto_match',
+            'basic_tvh_play_username',
+            'basic_tvh_play_password',
+            'basic_tvh_use_verify_ssl',
+            'basic_tvh_include_auth_in_url',
+            'basic_tvh_stream_profile',
         }
         return len(keys.intersection(sync_markers)) > 0
     except Exception:
         return False
 
 
-def _save_runtime_settings(req, clear_sheet_when_auto_off=True):
+def _save_runtime_settings(req):
     result = {
         'saved': False,
         'is_sync_form': False,
-        'auto_match_before': False,
-        'auto_match_after': False,
-        'auto_match_turned_off': False,
-        'sheet_clear_ret': None,
     }
     try:
         if req is None or not getattr(req, 'form', None):
             return result
-
         result['is_sync_form'] = _is_sync_form(req)
-        before_raw = P.ModelSetting.get('basic_channel_auto_match')
-        result['auto_match_before'] = _is_true_text(before_raw)
-
         P.ModelSetting.setting_save(req)
         result['saved'] = True
-
-        if result['is_sync_form']:
-            form = req.form
-            if 'basic_channel_auto_match' in form:
-                current_value = 'True' if _is_true_text(form.get('basic_channel_auto_match')) else 'False'
-            else:
-                current_value = 'False'
-            P.ModelSetting.set('basic_channel_auto_match', current_value)
-
-        after_raw = P.ModelSetting.get('basic_channel_auto_match')
-        result['auto_match_after'] = _is_true_text(after_raw)
-
-        if clear_sheet_when_auto_off and result['is_sync_form'] and result['auto_match_before'] and not result['auto_match_after']:
-            result['auto_match_turned_off'] = True
-            try:
-                result['sheet_clear_ret'] = Task.clear_sheet_matches(reason='auto_match_off')
-            except Exception as e:
-                logger.exception(f'[ff_tvh_m3u] clear_sheet_matches on auto off exception: {str(e)}')
     except Exception as e:
         logger.warning(f'[ff_tvh_m3u] runtime setting_save skipped: {str(e)}')
     return result
@@ -111,9 +80,7 @@ def _is_sjva_auth_ok(raw):
                 return _is_truthy(raw.get(key))
 
         if 'ret' in raw and isinstance(raw.get('ret'), bool):
-            if raw.get('ret') is True:
-                return True
-            return False
+            return raw.get('ret') is True
 
         if 'ret' in raw:
             ret_text = str(raw.get('ret') or '').strip().lower()
@@ -239,17 +206,12 @@ class ModuleBasic(PluginModuleBase):
         'basic_tvh_stream_profile': '',
         'basic_tvh_include_auth_in_url': 'False',
         'basic_tvh_use_verify_ssl': 'False',
-        'basic_channel_auto_match': 'False',
         'basic_last_sync_time': '',
         'basic_last_sync_count': '0',
-        'basic_sheet_last_import_time': '',
-        'basic_sheet_rclone_remote': 'gds',
-        'basic_sheet_file_id': '1MFQKx-gdW3CtZNX_mvjOneRpI15ApejiDcxR1ilWZeI',
-        'basic_sheet_file_kind': 'google_sheet',
-        'basic_sheet_selected_name': '',
-        'basic_sheet_browse_path': '',
-        'basic_sheet_last_source': '',
-        'basic_sheet_last_match_count': '0',
+        'basic_match_last_run_time': '',
+        'basic_match_last_count': '0',
+        'basic_match_last_unmatched_count': '0',
+        'basic_match_source': '/data/db/ff_tvh_sheet_write.db',
     }
 
     def __init__(self, P):
@@ -270,8 +232,6 @@ class ModuleBasic(PluginModuleBase):
                 return redirect(f'/{P.package_name}/basic/sync')
 
             logger.debug(f'[ff_tvh_m3u] process_menu sub={sub}')
-            logger.debug(f'[ff_tvh_m3u] referrer={referrer}')
-            logger.debug(f'[ff_tvh_m3u] is_internal_referrer={is_internal_referrer}')
             logger.debug(f'[ff_tvh_m3u] db engine url = {db.engine.url}')
             logger.debug(f'[ff_tvh_m3u] dedicated db path = {DB_PATH}')
 
@@ -282,18 +242,20 @@ class ModuleBasic(PluginModuleBase):
             arg['m3u_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u")
             arg['m3u_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tvh")
             arg['m3u_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tivimate")
-            arg['last_sync_time'] = P.ModelSetting.get(f'{self.name}_last_sync_time')
-            arg['last_sync_count'] = P.ModelSetting.get(f'{self.name}_last_sync_count')
-            arg['sheet_last_import_time'] = P.ModelSetting.get('basic_sheet_last_import_time')
-            arg['sheet_source_info'] = Task.get_sheet_source_info()
+            arg['last_sync_time'] = P.ModelSetting.get('basic_last_sync_time')
+            arg['last_sync_count'] = P.ModelSetting.get('basic_last_sync_count')
+            arg['match_last_run_time'] = P.ModelSetting.get('basic_match_last_run_time')
+            arg['match_last_count'] = P.ModelSetting.get('basic_match_last_count')
+            arg['match_last_unmatched_count'] = P.ModelSetting.get('basic_match_last_unmatched_count')
+            arg['match_source'] = P.ModelSetting.get('basic_match_source') or '/data/db/ff_tvh_sheet_write.db'
             arg['grouped_channels'] = ModelChannel.get_grouped()
             arg['tag_count'] = len(ModelTag.get_all())
             arg['channel_count'] = len(ModelChannel.get_all())
             arg['group_count'] = len(ModelGroupOrder.get_all())
-            arg['sheet_rule_count'] = ModelSheetRule.get_count()
             arg['ungrouped_channels'] = ModelChannel.get_ungrouped()
             arg['ungrouped_count'] = len(arg['ungrouped_channels'])
-            arg['assignable_group_names'] = Task.get_sheet_group_names()
+            arg['assignable_group_names'] = ModelChannel.get_assignable_group_names()
+            arg['match_source_info'] = Task.get_match_source_info()
             arg['play_profile_list'] = []
 
             if sub == 'm3u':
@@ -321,11 +283,6 @@ class ModuleBasic(PluginModuleBase):
                 if str(arg.get('basic_tvh_include_auth_in_url', '')).strip().lower() in ['true', 'on', '1', 'yes', 'y']
                 else 'False'
             )
-            arg['basic_channel_auto_match'] = (
-                'True'
-                if str(arg.get('basic_channel_auto_match', '')).strip().lower() in ['true', 'on', '1', 'yes', 'y']
-                else 'False'
-            )
 
             return render_template(
                 f'{P.package_name}_{self.name}_setting.html',
@@ -345,14 +302,9 @@ class ModuleBasic(PluginModuleBase):
             logger.debug(f'[ff_tvh_m3u] process_ajax sub={sub}')
 
             if sub == 'setting_save':
-                save_info = _save_runtime_settings(req, clear_sheet_when_auto_off=True)
+                save_info = _save_runtime_settings(req)
                 if save_info.get('saved'):
-                    logger.info('[ff_tvh_m3u] setting_save success')
-                    msg = '설정을 저장했습니다.'
-                    if save_info.get('auto_match_turned_off'):
-                        msg += ' / 자동 채널 매칭을 꺼서 시트 매칭 결과를 초기화했습니다.'
-                    return jsonify({'ret': 'success', 'msg': msg, 'save_info': save_info})
-                logger.warning('[ff_tvh_m3u] setting_save failed')
+                    return jsonify({'ret': 'success', 'msg': '설정을 저장했습니다.', 'save_info': save_info})
                 return jsonify({'ret': 'danger', 'msg': '설정 저장 실패'})
 
             elif sub == 'test_connection':
@@ -371,21 +323,42 @@ class ModuleBasic(PluginModuleBase):
                 _save_runtime_settings(req)
                 return jsonify(Task.get_play_profiles())
 
-            elif sub == 'load_rclone_remotes':
-                _save_runtime_settings(req)
-                return jsonify(Task.list_rclone_remotes())
-
-            elif sub == 'import_sheet_rules':
-                _save_runtime_settings(req)
-                return jsonify(Task.import_sheet_rules())
-
-            elif sub == 'match_sheet_channels':
-                _save_runtime_settings(req)
-                return jsonify(Task.match_sheet_channels())
-
             elif sub == 'sync_channels':
                 _save_runtime_settings(req)
-                return jsonify(Task.sync_channels())
+                sync_ret = Task.sync_channels()
+                if sync_ret.get('ret') != 'success':
+                    return jsonify(sync_ret)
+
+                match_ret = Task.apply_db_rules()
+                final_ret = 'success'
+                if match_ret.get('ret') == 'danger':
+                    final_ret = 'danger'
+                elif match_ret.get('ret') == 'warning':
+                    final_ret = 'warning'
+
+                return jsonify({
+                    'ret': final_ret,
+                    'msg': f"{sync_ret.get('msg', '')} / {match_ret.get('msg', '')}",
+                    'sync': sync_ret,
+                    'match': match_ret,
+                })
+
+            elif sub == 'apply_db_rules':
+                _save_runtime_settings(req)
+                return jsonify(Task.apply_db_rules())
+
+            elif sub == 'reset_plugin_db':
+                return jsonify(Task.reset_plugin_db())
+
+            elif sub == 'search_match_channel':
+                keyword = request.form.get('keyword')
+                limit = request.form.get('limit', 30)
+                return jsonify(Task.search_master_channels(keyword, limit=limit))
+
+            elif sub == 'add_db_match_channel':
+                channel_uuid = request.form.get('channel_uuid')
+                channel_id = request.form.get('channel_id')
+                return jsonify(Task.add_db_match_channel(channel_uuid, channel_id))
 
             elif sub == 'move_group':
                 group_name = request.form.get('group_name')
@@ -419,10 +392,8 @@ class ModuleBasic(PluginModuleBase):
                     target = 'tivimate'
                 text = Task.build_m3u(target=target)
                 preview = '\n'.join(text.splitlines()[:1000])
-                logger.debug(f'[ff_tvh_m3u] preview_m3u generated target={target}')
                 return jsonify({'ret': 'success', 'preview': preview, 'msg': f'M3U 미리보기 생성 완료 ({target})'})
 
-            logger.warning(f'[ff_tvh_m3u] unknown ajax sub={sub}')
             return jsonify({'ret': 'warning', 'msg': f'알 수 없는 요청: {sub}'})
 
         except Exception as e:
@@ -435,11 +406,8 @@ class ModuleBasic(PluginModuleBase):
             if gate is not None:
                 return gate
 
-            logger.debug(f'[ff_tvh_m3u] process_api sub={sub}')
-
             if sub == 'm3u':
                 text = Task.build_m3u(target='tivimate')
-                logger.info('[ff_tvh_m3u] m3u api response generated target=tivimate')
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',
@@ -448,7 +416,6 @@ class ModuleBasic(PluginModuleBase):
 
             elif sub == 'm3u_tvh':
                 text = Task.build_m3u(target='tvh')
-                logger.info('[ff_tvh_m3u] m3u api response generated target=tvh')
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',
@@ -457,14 +424,12 @@ class ModuleBasic(PluginModuleBase):
 
             elif sub == 'm3u_tivimate':
                 text = Task.build_m3u(target='tivimate')
-                logger.info('[ff_tvh_m3u] m3u api response generated target=tivimate')
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',
                     headers={'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
                 )
 
-            logger.warning(f'[ff_tvh_m3u] unknown api sub={sub}')
             return jsonify({'ret': 'warning', 'msg': 'unknown api'})
 
         except Exception as e:

@@ -1,5 +1,5 @@
 title: "TVH M3U Maker"
-version: "0.0.1"
+version: "2.0.0-beta1"
 package_name: "tvh_m3u_plugin"
 developer: "에르퀴아"
 description: "TVHeadend 채널 그룹을 커스텀 M3U로 생성"

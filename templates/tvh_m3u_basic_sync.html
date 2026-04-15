@@ -1,10 +1,12 @@
 <div class="card mb-4">
-  <div class="card-header"><strong>TVHeadend 관리 설정</strong></div>
+  <div class="card-header"><strong>TVH 연결</strong></div>
   <div class="card-body">
-    <div class="mb-3">{{ macros.m_button_group([['manual_save_btn', '저장']]) }}</div>
+    <div class="mb-3">{{ macros.m_button_group([['manual_save_btn_tvh', '저장']]) }}</div>
+
     {{ macros.setting_input_text('basic_tvh_api_base', 'TVH API 주소', value=arg['basic_tvh_api_base'], desc=['예: https://tvh.example.com', '예: http://192.168.0.10:9981']) }}
     {{ macros.setting_input_text('basic_tvh_stream_base', 'TVH 스트림 주소', value=arg['basic_tvh_stream_base'], desc=['예: http://192.168.0.10:9981']) }}
     {{ macros.setting_checkbox('basic_tvh_use_verify_ssl', 'SSL 검증 사용', value=arg['basic_tvh_use_verify_ssl'], desc=['사설 인증서면 보통 Off']) }}
+
     {{ macros.m_hr() }}
 
     <h5>관리자 계정</h5>
@@ -12,55 +14,34 @@
     {{ macros.setting_input_text('basic_tvh_admin_password', '관리자 비밀번호', value=arg['basic_tvh_admin_password']) }}
 
     <div class="ff-action-btn-row">
-      <button type="button" class="btn btn-primary" id="test_admin_login_btn">로그인 확인</button>
-      <button type="button" class="btn btn-success" id="sync_channels_btn">채널 동기화</button>
+      <button type="button" class="btn btn-primary" id="test_admin_login_btn">관리자 로그인 확인</button>
     </div>
 
-    <div class="ff-mini-note ff-center-note">채널 동기화는 TVH의 채널/태그 정보를 그대로 가져오고, 채널 매칭은 구글 시트 규칙으로 그룹 자동분배를 시도합니다.</div>
     <div id="admin_login_result" class="ff-result-box"></div>
+
     {{ macros.m_hr() }}
-    {{ macros.info_text('basic_last_sync_time', '마지막 동기화 시각', value=arg['last_sync_time']) }}
-    {{ macros.info_text('basic_last_sync_count', '마지막 동기화 채널 수', value=arg['last_sync_count']) }}
-  </div>
-</div>
 
-<div class="card mb-4">
-  <div class="card-header"><strong>채널 자동분배 / Rclone 연동</strong></div>
-  <div class="card-body">
-    <div class="ff-toggle-wrap">
-      {{ macros.setting_checkbox('basic_channel_auto_match', '채널 자동분배', value=arg['basic_channel_auto_match'], desc=['Off: TVH 채널만 그대로 유지합니다.', 'On: 알클론 드라이브의 구글 시트 규칙으로 채널 매칭을 시도합니다.']) }}
+    <h5>채널 매칭</h5>
+
+    <div class="ff-action-btn-row">
+      <button type="button" class="btn btn-success" id="sync_channels_btn">채널 동기화 + 기준 DB 매칭</button>
+      <button type="button" class="btn btn-outline-secondary" id="apply_db_rules_btn">기준 DB 매칭만 재실행</button>
+      <button type="button" class="btn btn-danger" id="reset_plugin_db_btn">플러그인 DB 초기화</button>
     </div>
 
-    <div id="auto_match_control_wrap" class="ff-auto-match-panel">
-      <div class="form-group row">
-        <label class="col-sm-3 col-form-label">알클론 드라이브</label>
-        <div class="col-sm-9">
-          <div class="d-flex" style="gap:8px; flex-wrap:wrap; align-items:center;">
-            <select class="form-control" id="basic_sheet_rclone_remote" name="basic_sheet_rclone_remote" style="max-width:240px;">
-              {% if arg.get('basic_sheet_rclone_remote') %}
-                <option value="{{ arg.get('basic_sheet_rclone_remote') }}" selected>{{ arg.get('basic_sheet_rclone_remote') }}</option>
-              {% else %}
-                <option value="">알클론 드라이브 선택</option>
-              {% endif %}
-            </select>
-            <button type="button" class="btn btn-outline-secondary" id="load_rclone_remotes_btn">드라이브 목록</button>
-            <button type="button" class="btn btn-primary" id="match_sheet_channels_btn">채널 매칭</button>
-          </div>
-        </div>
-      </div>
-      <div class="ff-sheet-help">채널 동기화는 TVH 채널을 그대로 저장하고, 채널 매칭은 현재 시트 규칙으로 그룹/로고 자동 매칭만 다시 실행합니다.</div>
+    <div class="ff-mini-note ff-center-note">
+      관리자 계정 확인 후 TVH 채널/태그를 저장하고, 그룹을 자동 반영합니다.
     </div>
-
-    <input type="hidden" id="basic_sheet_file_id" name="basic_sheet_file_id" value="{{ arg.get('basic_sheet_file_id', '1MFQKx-gdW3CtZNX_mvjOneRpI15ApejiDcxR1ilWZeI') }}">
-    <input type="hidden" id="basic_sheet_file_kind" name="basic_sheet_file_kind" value="{{ arg.get('basic_sheet_file_kind', 'google_sheet') }}">
-    <input type="hidden" id="basic_sheet_selected_name" name="basic_sheet_selected_name" value="{{ arg.get('basic_sheet_selected_name', '') }}">
-    <input type="hidden" id="basic_sheet_browse_path" name="basic_sheet_browse_path" value="{{ arg.get('basic_sheet_browse_path', '') }}">
+    <div class="ff-mini-note text-danger ff-center-note" style="margin-top:6px;">
+      플러그인 DB 초기화는 채널/태그/그룹순서/수동지정/프로필/매칭 반영값을 비웁니다. 
+    </div>
 
     <div class="ff-fixed-box" style="margin-top:10px;">
-      <div>현재 소스: <code>{{ arg.get('sheet_source_info', {}).get('source_text', '-') or '-' }}</code></div>
-      <div>선택 파일명: {{ arg.get('sheet_source_info', {}).get('selected_name', '-') or '-' }}</div>
-      <div>마지막 불러오기: {{ arg.get('sheet_last_import_time', '-') or '-' }}</div>
-      <div>규칙 <strong>{{ arg.get('sheet_rule_count', 0) }}</strong>개 / 마지막 매칭 <strong>{{ arg.get('sheet_last_match_count', 0) or 0 }}</strong>개</div>
+                  <div>마지막 동기화 시각: {{ arg.get('last_sync_time', '-') or '-' }}</div>
+      <div>마지막 동기화 채널 수: <strong>{{ arg.get('last_sync_count', 0) or 0 }}</strong></div>
+      <div>마지막 매칭 시각: {{ arg.get('match_last_run_time', '-') or '-' }}</div>
+      <div>마지막 매칭 수: <strong>{{ arg.get('match_last_count', 0) or 0 }}</strong></div>
+      <div>마지막 미매칭 수: <strong>{{ arg.get('match_last_unmatched_count', 0) or 0 }}</strong></div>
     </div>
   </div>
 </div>
@@ -88,13 +69,55 @@
 
       <div class="ff-input-priority-note">새 그룹명을 입력하면 선택 목록보다 우선합니다.</div>
 
-      <div class="ff-ungrouped-list">
+      <div class="ff-ungrouped-list" style="max-height:540px; overflow-y:auto; margin-top:12px;">
         {% for ch in arg['ungrouped_channels'] %}
           <label class="ff-ungrouped-item">
             <input type="checkbox" class="ungrouped-channel-check" value="{{ ch.channel_uuid }}">
             [{{ ch.number }}] {{ ch.name }} / {{ ch.channel_uuid }}
           </label>
         {% endfor %}
+      </div>
+
+      <div class="card mt-3">
+        <div class="card-header"><strong>DB에 매칭채널 추가</strong></div>
+        <div class="card-body">
+          <div class="ff-mini-note">선택한 그룹 미지정 채널명을 기준으로 표준 채널을 검색하고, 맞는 표준 채널을 선택한 뒤 현재 채널명을 DB에 매칭채널로 추가합니다.</div>
+          <div class="ff-mini-note text-muted" style="margin-top:6px;">매칭이 안되는 채널은 다른 채널명으로 검색하세요.</div>
+
+          <div class="ff-action-btn-row mt-3">
+            <button type="button" class="btn btn-outline-secondary" id="load_selected_channel_btn">선택 채널명 불러오기</button>
+          </div>
+
+          <div class="ff-fixed-box" style="margin-top:10px;">
+            <div>선택 채널: <strong id="selected_ungrouped_channel_name">-</strong></div>
+            <div>채널 UUID: <code id="selected_ungrouped_channel_uuid">-</code></div>
+          </div>
+
+          <div class="ff-ungrouped-toolbar" style="margin-top:12px;">
+            <input type="text" id="match_search_keyword" class="form-control" placeholder="표준 채널 검색어">
+            <button type="button" class="btn btn-primary" id="search_match_channel_btn">표준 채널 검색</button>
+          </div>
+
+          <div id="match_search_result_msg" class="ff-mini-note" style="margin-top:10px;"></div>
+
+          <div class="ff-ungrouped-list" id="match_search_result_list" style="max-height:260px; overflow-y:auto; margin-top:10px; border:1px solid #e5e7eb; border-radius:8px; padding:8px;">
+            <div class="text-muted">검색 결과가 여기에 표시됩니다.</div>
+          </div>
+
+          <div class="ff-fixed-box" style="margin-top:12px;">
+            <div>선택한 표준 채널: <strong id="selected_master_channel_name">-</strong></div>
+            <div>표준 채널 ID: <code id="selected_master_channel_id">-</code></div>
+            <div>그룹: <strong id="selected_master_group_name">-</strong></div>
+          </div>
+
+          <div class="ff-action-btn-row mt-3">
+            <label style="display:flex; align-items:center; gap:8px; margin:0;">
+              <input type="checkbox" id="auto_reapply_after_add" checked>
+              <span>추가 후 자동 재매칭</span>
+            </label>
+            <button type="button" class="btn btn-success" id="add_db_match_channel_btn">DB에 매칭채널 추가</button>
+          </div>
+        </div>
       </div>
     {% else %}
       <div>그룹 미지정 채널이 없습니다.</div>
@@ -154,7 +177,6 @@
                       <input type="checkbox" class="group-channel-check" value="{{ ch.channel_uuid }}">
                       [{{ ch.number }}] {{ ch.name }}
                       {% if ch.manual_group_name %}<span class="ff-badge ff-badge-manual">수동</span>{% endif %}
-                      {% if ch.sheet_group_name %}<span class="ff-badge ff-badge-sheet">시트: {{ ch.sheet_group_name }}</span>{% endif %}
                       {% if ch.sheet_logo_url %}<span class="ff-badge ff-badge-logo">로고</span>{% endif %}
                       / {{ ch.channel_uuid }}
                     </label>
