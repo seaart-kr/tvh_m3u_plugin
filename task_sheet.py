@@ -13,6 +13,31 @@ WRITE_DB_PATH = '/data/db/ff_tvh_sheet_write.db'
 
 
 class TaskSheet(TaskBase):
+
+    _ff_current_source_info = None
+
+    @staticmethod
+    def _get_runtime_source_info():
+        info = getattr(TaskSheet, '_ff_current_source_info', None)
+        if isinstance(info, dict) and info.get('db_path'):
+            return info
+
+        return {
+            'requested_mode': 'local',
+            'effective_mode': 'local',
+            'db_path': '/data/db/ff_tvh_sheet_write.db',
+            'label': '내부 기준 DB',
+            'fallback_used': False,
+            'reason': 'task_sheet_default_local',
+        }
+
+    @staticmethod
+    def _resolve_write_db_path():
+        info = getattr(TaskSheet, '_ff_current_source_info', None)
+        if isinstance(info, dict) and info.get('db_path'):
+            return info.get('db_path')
+        return '/data/db/ff_tvh_sheet_write.db'
+
     @staticmethod
     def _now():
         return str(datetime.now())[:19]
@@ -27,19 +52,37 @@ class TaskSheet(TaskBase):
         return text
 
     @staticmethod
+    def split_aliases(value):
+        text = str(value or '').strip()
+        if not text:
+            return []
+        parts = re.split(r'[|\n\r]+', text)
+        results = []
+        seen = set()
+        for part in parts:
+            item = str(part or '').strip()
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(item)
+        return results
+
+    @staticmethod
     def get_match_source_info():
-        return {
-            'ret': 'success',
-            'source': 'ff_tvh_sheet_write.db',
-            'db_path': WRITE_DB_PATH,
-            'exists': os.path.exists(WRITE_DB_PATH),
-        }
+        info = getattr(TaskSheet, '_ff_current_source_info', None)
+        if isinstance(info, dict) and info.get('db_path'):
+            return info
+        return TaskSheet._get_runtime_source_info()
 
     @staticmethod
     def _connect_write_db():
-        if not os.path.exists(WRITE_DB_PATH):
-            raise RuntimeError(f'기준 DB 파일이 없습니다: {WRITE_DB_PATH}')
-        conn = sqlite3.connect(WRITE_DB_PATH)
+        db_path = TaskSheet._resolve_write_db_path()
+        if not os.path.exists(db_path):
+            raise RuntimeError(f'기준 DB 파일이 없습니다: {db_path}')
+        conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -75,6 +118,40 @@ class TaskSheet(TaskBase):
         return cur.fetchall()
 
     @staticmethod
+    def _load_custom_logo_maps(conn):
+        custom_logo_by_master_id = {}
+        custom_logo_by_name = {}
+
+        if not TaskSheet._table_exists(conn, 'custom_logo'):
+            return custom_logo_by_master_id, custom_logo_by_name
+
+        cols = TaskSheet._get_columns(conn, 'custom_logo')
+        fk_col = TaskSheet._pick_column(cols, ['channel_master_id', 'master_id', 'cm_id'])
+        name_col = TaskSheet._pick_column(cols, ['standard_name', 'channel_name', 'name', 'title'])
+        logo_col = TaskSheet._pick_column(cols, ['logo_url', 'custom_logo_url', 'url', 'path', 'logo'])
+
+        select_cols = [
+            f"{fk_col} AS channel_master_id" if fk_col else "NULL AS channel_master_id",
+            f"{name_col} AS standard_name" if name_col else "'' AS standard_name",
+            f"{logo_col} AS custom_logo_url" if logo_col else "'' AS custom_logo_url",
+        ]
+
+        rows = TaskSheet._fetch_rows(conn, 'custom_logo', select_cols)
+        for row in rows:
+            logo_url = str(row['custom_logo_url'] or '').strip()
+            if not logo_url:
+                continue
+
+            if row['channel_master_id'] is not None:
+                custom_logo_by_master_id[row['channel_master_id']] = logo_url
+
+            std_name = str(row['standard_name'] or '').strip().lower()
+            if std_name:
+                custom_logo_by_name[std_name] = logo_url
+
+        return custom_logo_by_master_id, custom_logo_by_name
+
+    @staticmethod
     def load_db_rules():
         conn = TaskSheet._connect_write_db()
 
@@ -85,8 +162,15 @@ class TaskSheet(TaskBase):
         master_cols = TaskSheet._get_columns(conn, 'channel_master')
         master_id_col = TaskSheet._pick_column(master_cols, ['id', 'channel_master_id', 'idx'])
         master_name_col = TaskSheet._pick_column(master_cols, ['standard_name', 'channel_name', 'name', 'title'])
-        master_group_col = TaskSheet._pick_column(master_cols, ['group_name', 'group_category', 'category', 'group', 'group_nm'])
-        master_provider_logo_col = TaskSheet._pick_column(master_cols, ['provider_logo_url', 'provider_logo', 'logo_url', 'logo', 'logo_path'])
+        master_group_col = TaskSheet._pick_column(master_cols, [
+            'group_category', 'group_name', 'category', 'group', 'group_nm', 'category_name'
+        ])
+        master_provider_logo_col = TaskSheet._pick_column(master_cols, [
+            'provider_logo_url', 'provider_logo', 'logo_url', 'logo', 'logo_path'
+        ])
+        master_aka_col = TaskSheet._pick_column(master_cols, [
+            'e_aka', 'aka_name', 'aka_names', 'aka', 'aliases', 'alias_names'
+        ])
 
         if not master_id_col or not master_name_col:
             conn.close()
@@ -95,45 +179,13 @@ class TaskSheet(TaskBase):
         select_cols = [
             f"{master_id_col} AS channel_master_id",
             f"{master_name_col} AS standard_name",
+            f"{master_group_col} AS group_name" if master_group_col else "'' AS group_name",
+            f"{master_provider_logo_col} AS provider_logo_url" if master_provider_logo_col else "'' AS provider_logo_url",
+            f"{master_aka_col} AS aka_names" if master_aka_col else "'' AS aka_names",
         ]
-        if master_group_col:
-            select_cols.append(f"{master_group_col} AS group_name")
-        else:
-            select_cols.append("'' AS group_name")
-
-        if master_provider_logo_col:
-            select_cols.append(f"{master_provider_logo_col} AS provider_logo_url")
-        else:
-            select_cols.append("'' AS provider_logo_url")
-
         master_rows = TaskSheet._fetch_rows(conn, 'channel_master', select_cols)
 
-        custom_logo_by_master_id = {}
-        custom_logo_by_name = {}
-
-        if TaskSheet._table_exists(conn, 'custom_logo'):
-            custom_cols = TaskSheet._get_columns(conn, 'custom_logo')
-            custom_fk_col = TaskSheet._pick_column(custom_cols, ['channel_master_id', 'master_id', 'cm_id'])
-            custom_name_col = TaskSheet._pick_column(custom_cols, ['standard_name', 'channel_name', 'name', 'title'])
-            custom_logo_col = TaskSheet._pick_column(custom_cols, ['logo_url', 'custom_logo_url', 'url', 'path', 'logo'])
-
-            custom_select_cols = []
-            custom_select_cols.append(f"{custom_fk_col} AS channel_master_id" if custom_fk_col else "NULL AS channel_master_id")
-            custom_select_cols.append(f"{custom_name_col} AS standard_name" if custom_name_col else "'' AS standard_name")
-            custom_select_cols.append(f"{custom_logo_col} AS custom_logo_url" if custom_logo_col else "'' AS custom_logo_url")
-
-            custom_rows = TaskSheet._fetch_rows(conn, 'custom_logo', custom_select_cols)
-            for row in custom_rows:
-                logo_url = str(row['custom_logo_url'] or '').strip()
-                if not logo_url:
-                    continue
-
-                if row['channel_master_id'] is not None:
-                    custom_logo_by_master_id[row['channel_master_id']] = logo_url
-
-                std_name = str(row['standard_name'] or '').strip().lower()
-                if std_name:
-                    custom_logo_by_name[std_name] = logo_url
+        custom_logo_by_master_id, custom_logo_by_name = TaskSheet._load_custom_logo_maps(conn)
 
         master_exact = {}
         alias_exact = {}
@@ -170,10 +222,18 @@ class TaskSheet(TaskBase):
             if norm:
                 master_norm[norm] = item
 
+            for alias in TaskSheet.split_aliases(row['aka_names']):
+                alias_exact[alias.lower()] = item
+                alias_norm_key = TaskSheet.normalize_name(alias)
+                if alias_norm_key:
+                    alias_norm[alias_norm_key] = item
+
         if TaskSheet._table_exists(conn, 'channel_alias'):
             alias_cols = TaskSheet._get_columns(conn, 'channel_alias')
             alias_fk_col = TaskSheet._pick_column(alias_cols, ['channel_master_id', 'master_id', 'cm_id', 'channel_id'])
-            alias_name_col = TaskSheet._pick_column(alias_cols, ['alias_name', 'aka_name', 'alias', 'aka', 'name'])
+            alias_name_col = TaskSheet._pick_column(alias_cols, [
+                'alias_name', 'aka_name', 'aka_names', 'aka', 'alias', 'name', 'e_aka'
+            ])
             alias_standard_name_col = TaskSheet._pick_column(alias_cols, ['standard_name', 'channel_name', 'master_name'])
 
             if alias_name_col:
@@ -185,10 +245,6 @@ class TaskSheet(TaskBase):
 
                 alias_rows = TaskSheet._fetch_rows(conn, 'channel_alias', alias_select_cols)
                 for row in alias_rows:
-                    alias_name = str(row['alias_name'] or '').strip()
-                    if not alias_name:
-                        continue
-
                     item = None
                     if row['channel_master_id'] in master_info_by_id:
                         item = master_info_by_id[row['channel_master_id']]
@@ -200,10 +256,11 @@ class TaskSheet(TaskBase):
                     if item is None:
                         continue
 
-                    alias_exact[alias_name.lower()] = item
-                    norm = TaskSheet.normalize_name(alias_name)
-                    if norm:
-                        alias_norm[norm] = item
+                    for alias in TaskSheet.split_aliases(row['alias_name']):
+                        alias_exact[alias.lower()] = item
+                        alias_norm_key = TaskSheet.normalize_name(alias)
+                        if alias_norm_key:
+                            alias_norm[alias_norm_key] = item
 
         conn.close()
 
@@ -245,27 +302,57 @@ class TaskSheet(TaskBase):
             updates = []
             matched_count = 0
             unmatched_count = 0
+            newly_matched_count = 0
+            method_counts = {
+                'master_exact': 0,
+                'alias_exact': 0,
+                'master_norm': 0,
+                'alias_norm': 0,
+            }
+            unmatched_names = []
 
             for row in channels:
-                info, _match_type = TaskSheet.match_channel(row.name, rules)
+                info, match_type = TaskSheet.match_channel(row.name, rules)
                 if info is None:
                     unmatched_count += 1
+                    if len(unmatched_names) < 10:
+                        unmatched_names.append(str(row.name or '').strip())
                     continue
 
                 matched_count += 1
+                if match_type in method_counts:
+                    method_counts[match_type] += 1
+
+                previous_sheet_group_name = str(getattr(row, 'sheet_group_name', '') or '').strip()
+                previous_sheet_logo_url = str(getattr(row, 'sheet_logo_url', '') or '').strip()
+                previous_sheet_logo_custom = str(getattr(row, 'sheet_logo_custom', '') or '').strip()
+                previous_sheet_logo_wave1 = str(getattr(row, 'sheet_logo_wave1', '') or '').strip()
+                previous_sheet_logo_wave2 = str(getattr(row, 'sheet_logo_wave2', '') or '').strip()
 
                 manual_group_name = str(getattr(row, 'manual_group_name', '') or '').strip()
-                sheet_group_name = ''
-                if not manual_group_name:
-                    sheet_group_name = str(info.get('group_name') or '').strip()
+                matched_group_name = str(info.get('group_name') or '').strip()
 
                 custom_logo_url = str(info.get('custom_logo_url') or '').strip()
                 provider_logo_url = str(info.get('provider_logo_url') or '').strip()
                 final_logo_url = str(info.get('final_logo_url') or '').strip()
 
+                if not any([
+                    previous_sheet_group_name,
+                    previous_sheet_logo_url,
+                    previous_sheet_logo_custom,
+                    previous_sheet_logo_wave1,
+                    previous_sheet_logo_wave2,
+                ]) and any([
+                    '' if manual_group_name else matched_group_name,
+                    final_logo_url,
+                    custom_logo_url,
+                    provider_logo_url,
+                ]):
+                    newly_matched_count += 1
+
                 updates.append({
                     'channel_uuid': row.channel_uuid,
-                    'sheet_group_name': sheet_group_name,
+                    'sheet_group_name': '' if manual_group_name else matched_group_name,
                     'sheet_logo_url': final_logo_url,
                     'sheet_logo_wave1': provider_logo_url,
                     'sheet_logo_wave2': provider_logo_url,
@@ -281,19 +368,33 @@ class TaskSheet(TaskBase):
             P.ModelSetting.set('basic_match_last_run_time', TaskSheet._now())
             P.ModelSetting.set('basic_match_last_count', str(matched_count))
             P.ModelSetting.set('basic_match_last_unmatched_count', str(unmatched_count))
-            P.ModelSetting.set('basic_match_source', WRITE_DB_PATH)
+            P.ModelSetting.set('basic_match_source', TaskSheet._get_runtime_source_info().get('label', '내부 기준 DB'))
 
             logger.info(
                 f'[ff_tvh_m3u] apply_db_rules done matched={matched_count} '
-                f'unmatched={unmatched_count} db={WRITE_DB_PATH}'
+                f'unmatched={unmatched_count} newly_matched={newly_matched_count} '
+                f'methods=master_exact:{method_counts["master_exact"]},'
+                f'alias_exact:{method_counts["alias_exact"]},'
+                f'master_norm:{method_counts["master_norm"]},'
+                f'alias_norm:{method_counts["alias_norm"]} mode={TaskSheet._get_runtime_source_info().get("effective_mode", "local")} fallback={TaskSheet._get_runtime_source_info().get("fallback_used", False)} label={TaskSheet._get_runtime_source_info().get("label", "내부 기준 DB")}'
             )
+            if unmatched_names:
+                logger.info(
+                    f'[ff_tvh_m3u] apply_db_rules unmatched_sample=' + ', '.join(unmatched_names)
+                )
 
             return {
                 'ret': 'success',
                 'msg': f'기준 DB 매칭 완료: 매칭 {matched_count} / 미매칭 {unmatched_count}',
                 'matched_count': matched_count,
                 'unmatched_count': unmatched_count,
-                'db_path': WRITE_DB_PATH,
+                'newly_matched_count': newly_matched_count,
+                'method_counts': method_counts,
+                'unmatched_sample': unmatched_names,
+                'db_path': TaskSheet._resolve_write_db_path(),
+            'source_label': TaskSheet._get_runtime_source_info().get('label', '내부 기준 DB'),
+            'effective_mode': TaskSheet._get_runtime_source_info().get('effective_mode', 'local'),
+            'fallback_used': TaskSheet._get_runtime_source_info().get('fallback_used', False),
             }
         except Exception as e:
             logger.exception(f'[ff_tvh_m3u] apply_db_rules exception: {str(e)}')
@@ -326,3 +427,73 @@ class TaskSheet(TaskBase):
     @staticmethod
     def get_sheet_group_names():
         return ModelChannel.get_assignable_group_names()
+
+
+# === REMOTE MATCH RULES PATCH START ===
+try:
+    import sys as _remote_sys
+    from .task_remote_backend import TaskRemoteBackend
+
+    _remote_loader_name = None
+    _remote_loader = None
+    for _name in ['load_rules_from_db', 'load_rules', 'load_match_rules', '_load_rules_from_db']:
+        if hasattr(TaskSheet, _name):
+            _remote_loader_name = _name
+            _remote_loader = getattr(TaskSheet, _name)
+            break
+
+    if _remote_loader_name and _remote_loader:
+        def _remote_wrapped_loader(*args, **kwargs):
+            if TaskRemoteBackend.is_remote_enabled():
+                _rules = TaskRemoteBackend.fetch_match_rules()
+                if isinstance(_rules, dict) and 'master_exact' in _rules:
+                    try:
+                        _remote_sys.modules[__name__].WRITE_DB_PATH = TaskRemoteBackend.describe_remote()
+                    except Exception:
+                        pass
+                    return _rules
+            return _remote_loader(*args, **kwargs)
+
+        setattr(TaskSheet, _remote_loader_name, staticmethod(_remote_wrapped_loader))
+except Exception:
+    pass
+# === REMOTE MATCH RULES PATCH END ===
+
+
+# === REMOTE MATCH RULES API PATCH V2 START ===
+try:
+    from .task_remote_backend import TaskRemoteBackend
+
+    _orig_load_db_rules_v2 = getattr(TaskSheet, 'load_db_rules', None)
+
+    if _orig_load_db_rules_v2:
+        def _load_db_rules_remote_first_v2():
+            if TaskRemoteBackend.is_remote_enabled():
+                _rules = TaskRemoteBackend.fetch_match_rules()
+                if isinstance(_rules, dict) and any(k in _rules for k in ['master_exact', 'alias_exact', 'master_norm', 'alias_norm']):
+                    try:
+                        globals()['WRITE_DB_PATH'] = TaskRemoteBackend.describe_remote()
+                    except Exception:
+                        pass
+
+                    if 'group_names' not in _rules:
+                        _groups = set()
+                        for _bucket in ['master_exact', 'alias_exact', 'master_norm', 'alias_norm']:
+                            _data = _rules.get(_bucket) or {}
+                            if isinstance(_data, dict):
+                                for _item in _data.values():
+                                    if not isinstance(_item, dict):
+                                        continue
+                                    _g = str(_item.get('group_name') or _item.get('group_category') or '').strip()
+                                    if _g:
+                                        _groups.add(_g)
+                        _rules['group_names'] = sorted(_groups)
+
+                    return _rules
+
+            return _orig_load_db_rules_v2()
+
+        TaskSheet.load_db_rules = staticmethod(_load_db_rules_remote_first_v2)
+except Exception:
+    pass
+# === REMOTE MATCH RULES API PATCH V2 END ===

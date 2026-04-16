@@ -211,7 +211,7 @@ class ModuleBasic(PluginModuleBase):
         'basic_match_last_run_time': '',
         'basic_match_last_count': '0',
         'basic_match_last_unmatched_count': '0',
-        'basic_match_source': '/data/db/ff_tvh_sheet_write.db',
+        'basic_match_source': '/data/db/ff_tvh_sheet_write.db', 'basic_match_source_mode': 'auto', 'basic_match_source_remote': '',
     }
 
     def __init__(self, P):
@@ -248,6 +248,12 @@ class ModuleBasic(PluginModuleBase):
             arg['match_last_count'] = P.ModelSetting.get('basic_match_last_count')
             arg['match_last_unmatched_count'] = P.ModelSetting.get('basic_match_last_unmatched_count')
             arg['match_source'] = P.ModelSetting.get('basic_match_source') or '/data/db/ff_tvh_sheet_write.db'
+            arg['basic_match_source_mode'] = P.ModelSetting.get('basic_match_source_mode') or 'auto'
+            arg['basic_match_source_remote'] = P.ModelSetting.get('basic_match_source_remote') or ''
+            try:
+                arg['match_source_info'] = Task.get_match_source_info()
+            except Exception:
+                arg['match_source_info'] = {}
             arg['grouped_channels'] = ModelChannel.get_grouped()
             arg['tag_count'] = len(ModelTag.get_all())
             arg['channel_count'] = len(ModelChannel.get_all())
@@ -346,6 +352,9 @@ class ModuleBasic(PluginModuleBase):
             elif sub == 'apply_db_rules':
                 _save_runtime_settings(req)
                 return jsonify(Task.apply_db_rules())
+
+            elif sub == 'reset_plugin_db':
+                return jsonify(Task.reset_plugin_db())
 
             elif sub == 'search_match_channel':
                 keyword = request.form.get('keyword')

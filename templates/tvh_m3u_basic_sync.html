@@ -26,17 +26,18 @@
     <div class="ff-action-btn-row">
       <button type="button" class="btn btn-success" id="sync_channels_btn">채널 동기화 + 기준 DB 매칭</button>
       <button type="button" class="btn btn-outline-secondary" id="apply_db_rules_btn">기준 DB 매칭만 재실행</button>
+      <button type="button" class="btn btn-danger" id="reset_plugin_db_btn">플러그인 DB 초기화</button>
     </div>
 
     <div class="ff-mini-note ff-center-note">
-      관리자 계정 확인 후 TVH 채널/태그를 저장하고,
-      ff_tvh_sheet_write.db 기준으로 그룹/로고를 자동 반영합니다.
+      관리자 계정 확인 후 TVH 채널/태그를 저장하고, 그룹을 자동 반영합니다.
+    </div>
+    <div class="ff-mini-note text-danger ff-center-note" style="margin-top:6px;">
+      플러그인 DB 초기화는 채널/태그/그룹순서/수동지정/프로필/매칭 반영값을 비웁니다. 
     </div>
 
     <div class="ff-fixed-box" style="margin-top:10px;">
-      <div>기준 DB: <code>{{ arg.get('match_source_info', {}).get('db_path', '/data/db/ff_tvh_sheet_write.db') }}</code></div>
-      <div>존재 여부: {{ '있음' if arg.get('match_source_info', {}).get('exists') else '없음' }}</div>
-      <div>마지막 동기화 시각: {{ arg.get('last_sync_time', '-') or '-' }}</div>
+                  <div>마지막 동기화 시각: {{ arg.get('last_sync_time', '-') or '-' }}</div>
       <div>마지막 동기화 채널 수: <strong>{{ arg.get('last_sync_count', 0) or 0 }}</strong></div>
       <div>마지막 매칭 시각: {{ arg.get('match_last_run_time', '-') or '-' }}</div>
       <div>마지막 매칭 수: <strong>{{ arg.get('match_last_count', 0) or 0 }}</strong></div>
@@ -189,5 +190,31 @@
     {% else %}
       <div>동기화된 채널이 없습니다.</div>
     {% endif %}
-  </div>
+  
+
+<hr>
+<div class="mt-3 mb-2"><strong>Remote 테스트 설정</strong></div>
+
+<div class="form-group">
+  <label for="basic_match_source_mode">매칭 소스 모드</label>
+  <select id="basic_match_source_mode" name="basic_match_source_mode" class="form-control form-control-sm">
+    <option value="auto" {% if arg.get('basic_match_source_mode', 'auto') == 'auto' %}selected{% endif %}>auto</option>
+    <option value="local" {% if arg.get('basic_match_source_mode', 'auto') == 'local' %}selected{% endif %}>local</option>
+    <option value="remote" {% if arg.get('basic_match_source_mode', 'auto') == 'remote' %}selected{% endif %}>remote</option>
+  </select>
+  <small class="form-text text-muted">auto / local / remote 중 선택</small>
+</div>
+
+<div class="form-group">
+  <label for="basic_match_source_remote">Remote 기준 DB</label>
+  <input type="text" class="form-control form-control-sm" id="basic_match_source_remote" name="basic_match_source_remote" value="{{ arg.get('basic_match_source_remote', '') }}">
+  <small class="form-text text-muted">예: /data/db/ff_tvh_sheet_write.db, file:///data/db/ff_tvh_sheet_write.db, remote:/data/db/ff_tvh_sheet_write.db, https://...</small>
+</div>
+
+{% set ms = arg.get('match_source_info', {}) %}
+<div class="mb-3 text-muted">
+  현재 해석: 요청={{ ms.get('requested_mode', 'auto') }} / 적용={{ ms.get('effective_mode', 'local') }} / fallback={{ ms.get('fallback_used', False) }} / reason={{ ms.get('reason', '') }}
+</div>
+
+</div>
 </div>
