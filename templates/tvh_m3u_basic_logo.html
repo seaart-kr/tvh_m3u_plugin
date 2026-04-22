@@ -1,0 +1,245 @@
+<div class="card mb-4">
+  <div class="card-header"><strong>로고 우선순위</strong></div>
+  <div class="card-body">
+    <div class="ff-mini-note">최종 M3U의 <code>tvg-logo</code>와 재가공 EPG의 <code>icon src</code>에 공통으로 적용됩니다. 위/아래로 순서를 바꾸고 저장하세요.</div>
+    <div class="alert alert-warning mt-3 mb-0">
+      <strong>필수 안내</strong><br>
+      provider/custom 로고 미리보기와 최종 EPG/M3U 로고가 정상 동작하려면
+      <code>/customlogo</code> 정적호스트가 <code>/data/plugins/tvh_m3u_plugin/docs/assets</code> 를 가리키도록 반드시 설정되어 있어야 합니다.<br>
+      실제 링크는 각 설치 사용자의 FF 주소를 기준으로 <code>__FF_BASE_URL__/customlogo/...</code> 형식으로 자동 생성됩니다.
+    </div>
+
+    <div class="mt-2" style="color:#666;">현재 로고 우선순위: <strong id="logo-priority-current-text">{{ arg.get('logo_priority_text', 'custom,kt,wavve,tving,sk') }}</strong></div>
+
+    <div id="logo-priority-list" class="mt-3">
+      {% for item in arg.get('logo_priority_items', []) %}
+      <div class="logo-priority-row d-flex align-items-center mb-2" data-key="{{ item['key'] }}" style="gap:8px;">
+        <div class="flex-grow-1" style="padding:8px 12px; border:1px solid #ddd; border-radius:4px; background:#fafafa;">
+          <strong>{{ item['label'] }}</strong>
+          <span style="color:#777; margin-left:6px;">{{ item['key'] }}</span>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-secondary js-logo-up">위로</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary js-logo-down">아래로</button>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="d-flex align-items-center" style="gap:8px; flex-wrap:wrap; margin-top:12px;">
+      <button type="button" class="btn btn-sm btn-secondary" id="btn-logo-priority-reset">기본값 복원</button>
+      <button type="button" class="btn btn-sm btn-primary" id="btn-logo-priority-save">저장</button>
+      <span id="logo-priority-save-result" style="color:#666;"></span>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><strong>로고 미리보기/선택</strong></div>
+  <div class="card-body">
+    <div class="ff-mini-note">그룹이 지정된 채널을 기준으로 현재 적용 로고와 후보 로고를 보여줍니다. 클릭해서 수동 선택하면 우선순위보다 먼저 적용됩니다.</div>
+
+    <form method="get" action="/{{ arg['package_name'] }}/basic/logo" class="mt-3">
+      <div class="form-row align-items-end">
+        <div class="form-group col-md-4">
+          <label>채널명/그룹 검색</label>
+          <input type="text" class="form-control form-control-sm" name="logo_q" value="{{ arg.get('logo_query', '') }}">
+        </div>
+        <div class="form-group col-md-3">
+          <label>필터</label>
+          <select class="form-control form-control-sm" name="logo_filter">
+            {% set current_filter = arg.get('logo_filter', 'all') %}
+            <option value="all" {% if current_filter == 'all' %}selected{% endif %}>전체</option>
+            <option value="missing" {% if current_filter == 'missing' %}selected{% endif %}>로고 없음</option>
+            <option value="multi" {% if current_filter == 'multi' %}selected{% endif %}>중복 후보</option>
+            <option value="custom" {% if current_filter == 'custom' %}selected{% endif %}>커스텀 존재</option>
+            <option value="provider" {% if current_filter == 'provider' %}selected{% endif %}>provider 존재</option>
+            <option value="manual" {% if current_filter == 'manual' %}selected{% endif %}>수동 선택 있음</option>
+          </select>
+        </div>
+        <div class="form-group col-md-5">
+          <button type="submit" class="btn btn-sm btn-primary">조회</button>
+          <a href="/{{ arg['package_name'] }}/basic/logo" class="btn btn-sm btn-secondary">초기화</a>
+          <span class="ml-2 text-muted">표시 수: <strong>{{ arg.get('logo_preview_count', 0) }}</strong></span>
+        </div>
+      </div>
+    </form>
+
+    {% if arg.get('logo_preview_rows') %}
+    <div class="table-responsive mt-3">
+      <table class="table table-sm table-bordered" style="min-width:1200px;">
+        <thead>
+          <tr>
+            <th style="width:70px;">번호</th>
+            <th style="width:180px;">채널명</th>
+            <th style="width:140px;">그룹</th>
+            <th style="width:90px;">현재</th>
+            <th style="width:100px;">현재 로고</th>
+            <th>후보 로고</th>
+            <th style="width:90px;">동작</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in arg.get('logo_preview_rows', []) %}
+          <tr data-channel-uuid="{{ row.get('channel_uuid', '') }}">
+            <td>{{ row.get('number', '') }}</td>
+            <td>
+              <div><strong>{{ row.get('name', '') }}</strong></div>
+              <div class="text-muted" style="font-size:11px;">{{ row.get('matched_channel_id', '') }}</div>
+            </td>
+            <td>{{ row.get('group_name', '') }}</td>
+            <td>
+              {% if row.get('is_manual') %}
+                <span class="badge badge-warning">수동</span>
+              {% else %}
+                <span class="badge badge-secondary">자동</span>
+              {% endif %}
+              <div style="font-size:11px; margin-top:4px;">{{ row.get('current_provider', '-') or '-' }}</div>
+            </td>
+            <td>
+              {% if row.get('current_logo_url') %}
+                <img src="{{ row.get('current_logo_url') }}" style="max-width:72px; max-height:40px; background:#111; padding:4px; border-radius:4px;" onerror="this.style.display='none'; this.parentNode.innerHTML='<span class=\'text-danger\'>없음</span>';">
+              {% else %}
+                <span class="text-danger">없음</span>
+              {% endif %}
+            </td>
+            <td>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                {% for cand in row.get('candidates', []) %}
+                <div class="logo-candidate-box {% if cand.get('is_selected') %}is-selected{% endif %}" data-provider="{{ cand.get('provider') }}" data-url-template="{{ cand.get('url_template')|e }}" style="width:112px; border:1px solid #ddd; border-radius:6px; padding:6px; background:#fff; text-align:center; cursor:pointer;">
+                  <div style="font-size:11px; margin-bottom:6px; font-weight:600;">{{ cand.get('label') }}</div>
+                  <div style="height:44px; display:flex; align-items:center; justify-content:center; background:#111; border-radius:4px;">
+                    <img src="{{ cand.get('preview_url') }}" style="max-width:92px; max-height:36px;" onerror="this.style.display='none'; this.parentNode.innerHTML='<span style=\'color:#999;font-size:11px;\'>없음</span>';">
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+            </td>
+            <td>
+              <button type="button" class="btn btn-sm btn-outline-secondary js-logo-clear">해제</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="ff-fixed-box mt-3">
+      <div>표시할 채널이 없습니다.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+(function() {
+  var listEl = document.getElementById('logo-priority-list');
+  if (listEl) {
+    var defaultOrder = ['custom', 'kt', 'wavve', 'tving', 'sk'];
+    var saveUrl = '/{{ arg["package_name"] }}/ajax/{{ arg["ajax_sub"] }}/save_logo_priority';
+    var resultEl = document.getElementById('logo-priority-save-result');
+    var currentTextEl = document.getElementById('logo-priority-current-text');
+
+    function getRows() {
+      return Array.prototype.slice.call(listEl.querySelectorAll('.logo-priority-row'));
+    }
+    function getCsv() {
+      return getRows().map(function(row) { return row.getAttribute('data-key'); }).join(',');
+    }
+    function setResult(text, isError) {
+      if (!resultEl) return;
+      resultEl.textContent = text || '';
+      resultEl.style.color = isError ? '#c00' : '#666';
+    }
+
+    listEl.addEventListener('click', function(evt) {
+      var row = evt.target.closest('.logo-priority-row');
+      if (!row) return;
+      if (evt.target.classList.contains('js-logo-up')) {
+        var prev = row.previousElementSibling;
+        if (prev) listEl.insertBefore(row, prev);
+      } else if (evt.target.classList.contains('js-logo-down')) {
+        var next = row.nextElementSibling;
+        if (next) listEl.insertBefore(next, row);
+      }
+    });
+
+    var resetBtn = document.getElementById('btn-logo-priority-reset');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', function() {
+        var rows = getRows();
+        rows.sort(function(a, b) { return defaultOrder.indexOf(a.getAttribute('data-key')) - defaultOrder.indexOf(b.getAttribute('data-key')); });
+        rows.forEach(function(row) { listEl.appendChild(row); });
+        setResult('기본 순서로 되돌렸습니다. 저장을 눌러 반영하세요.', false);
+      });
+    }
+
+    var saveBtn = document.getElementById('btn-logo-priority-save');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', function() {
+        var csv = getCsv();
+        setResult('저장 중...', false);
+        fetch(saveUrl, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+          body: 'logo_priority=' + encodeURIComponent(csv)
+        })
+        .then(function(resp) { return resp.json(); })
+        .then(function(data) {
+          if (data.ret !== 'success') {
+            setResult(data.msg || '저장 실패', true);
+            return;
+          }
+          if (currentTextEl && data.logo_priority_text) currentTextEl.textContent = data.logo_priority_text;
+          setResult(data.msg || '저장했습니다. 목록을 다시 불러옵니다.', false);
+          setTimeout(function(){ window.location.reload(); }, 400);
+        })
+        .catch(function(err) { setResult('저장 실패: ' + err, true); });
+      });
+    }
+  }
+
+  function postForm(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+      body: body
+    }).then(function(resp) { return resp.json(); });
+  }
+
+  document.addEventListener('click', function(evt) {
+    var candidate = evt.target.closest('.logo-candidate-box');
+    if (candidate) {
+      var tr = candidate.closest('tr[data-channel-uuid]');
+      if (!tr) return;
+      var channelUuid = tr.getAttribute('data-channel-uuid') || '';
+      var provider = candidate.getAttribute('data-provider') || '';
+      var urlTemplate = candidate.getAttribute('data-url-template') || '';
+      postForm('/{{ arg["package_name"] }}/ajax/{{ arg["ajax_sub"] }}/logo_preview_select',
+        'channel_uuid=' + encodeURIComponent(channelUuid) +
+        '&provider=' + encodeURIComponent(provider) +
+        '&url_template=' + encodeURIComponent(urlTemplate)
+      ).then(function(data) {
+        alert(data.msg || (data.ret === 'success' ? '저장했습니다.' : '실패했습니다.'));
+        if (data.ret === 'success') location.reload();
+      }).catch(function(err) {
+        alert('저장 실패: ' + err);
+      });
+      return;
+    }
+
+    var clearBtn = evt.target.closest('.js-logo-clear');
+    if (clearBtn) {
+      var tr = clearBtn.closest('tr[data-channel-uuid]');
+      if (!tr) return;
+      var channelUuid = tr.getAttribute('data-channel-uuid') || '';
+      postForm('/{{ arg["package_name"] }}/ajax/{{ arg["ajax_sub"] }}/logo_preview_clear',
+        'channel_uuid=' + encodeURIComponent(channelUuid)
+      ).then(function(data) {
+        alert(data.msg || (data.ret === 'success' ? '해제했습니다.' : '실패했습니다.'));
+        if (data.ret === 'success') location.reload();
+      }).catch(function(err) {
+        alert('해제 실패: ' + err);
+      });
+    }
+  });
+})();
+</script>
