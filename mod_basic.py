@@ -1,11 +1,18 @@
 # -*- coding: utf-8 -*-
 import importlib
 import sys
+import os
+import json
+import gzip
+import shutil
+from datetime import datetime
+import xml.etree.ElementTree as ET
 
+import requests
 from flask import request, render_template, jsonify, redirect, Response, render_template_string
 
 from .setup import *
-from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, ModelChannelProfile, DB_PATH
+from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, ModelChannelProfile, ModelLogoOverride, DB_PATH
 from .task import Task
 
 
@@ -174,6 +181,117 @@ def _render_sjva_auth_required_page(message):
     )
 
 
+EPG_PROVIDER_OPTIONS = [
+    ('kt', 'KT'),
+    ('lgu', 'LG'),
+    ('sk', 'SK'),
+    ('daum', 'DAUM'),
+    ('naver', 'NAVER'),
+    ('wavve', 'WAVVE'),
+    ('tving', 'TVING'),
+    ('spotv', 'SPOTV'),
+]
+EPG_PROVIDER_LABEL_MAP = {item[0]: item[1] for item in EPG_PROVIDER_OPTIONS}
+
+
+LOGO_PRIORITY_OPTIONS = [
+    ('custom', '커스텀'),
+    ('kt', 'KT'),
+    ('wavve', 'WAVVE'),
+    ('tving', 'TVING'),
+    ('sk', 'SK'),
+]
+LOGO_PRIORITY_LABEL_MAP = {item[0]: item[1] for item in LOGO_PRIORITY_OPTIONS}
+
+
+def _parse_logo_priority_csv(text_value):
+    items = []
+    seen = set()
+    for raw in str(text_value or '').split(','):
+        key = ''.join(ch for ch in str(raw).strip().lower() if ch.isalnum())
+        if not key or key in seen:
+            continue
+        if key not in LOGO_PRIORITY_LABEL_MAP:
+                continue
+        seen.add(key)
+        items.append(key)
+    for key, _label in LOGO_PRIORITY_OPTIONS:
+        if key not in seen:
+            items.append(key)
+    return items
+
+
+def _build_logo_priority_state(text_value):
+    items = _parse_logo_priority_csv(text_value)
+    return {
+        'items': [{'key': key, 'label': LOGO_PRIORITY_LABEL_MAP.get(key, key.upper())} for key in items],
+        'text': ','.join(items),
+    }
+
+
+def _detect_provider_from_channel_id(channel_id):
+    cid = str(channel_id or '').strip().lower()
+    if not cid:
+        return ''
+
+    for sep in ['.', '_', '-', ':', '/']:
+        if sep in cid:
+            parts = [x for x in cid.split(sep) if x]
+            for token in reversed(parts):
+                token = ''.join(ch for ch in token if ch.isalnum())
+                if token in EPG_PROVIDER_LABEL_MAP:
+                    return token
+
+    compact = ''.join(ch for ch in cid if ch.isalnum())
+    for key in EPG_PROVIDER_LABEL_MAP.keys():
+        if compact.endswith(key) or compact.startswith(key):
+            return key
+    return ''
+
+
+def _parse_provider_csv(text_value):
+    items = []
+    seen = set()
+    for raw in str(text_value or '').split(','):
+        key = ''.join(ch for ch in str(raw).strip().lower() if ch.isalnum())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        items.append(key)
+    return items
+
+
+def _build_epg_provider_rows(enabled_csv='', priority_csv=''):
+    base_ids = [item[0] for item in EPG_PROVIDER_OPTIONS]
+    base_map = {item[0]: item[1] for item in EPG_PROVIDER_OPTIONS}
+
+    enabled_list = _parse_provider_csv(enabled_csv)
+    if not enabled_list:
+        enabled_list = list(base_ids)
+    enabled_set = {x for x in enabled_list if x in base_map}
+
+    priority_list = [x for x in _parse_provider_csv(priority_csv) if x in base_map]
+    for key in base_ids:
+        if key not in priority_list:
+            priority_list.append(key)
+
+    rows = []
+    for key in priority_list:
+        rows.append({
+            'key': key,
+            'label': base_map[key],
+            'enabled': key in enabled_set,
+        })
+
+    return {
+        'rows': rows,
+        'priority_csv': ','.join(priority_list),
+        'enabled_csv': ','.join([row['key'] for row in rows if row.get('enabled')]),
+        'enabled_labels': [row['label'] for row in rows if row.get('enabled')],
+        'disabled_labels': [row['label'] for row in rows if not row.get('enabled')],
+    }
+
+
 def _check_sjva_or_block(mode='html'):
     auth_info = _get_sjva_auth_info()
     if auth_info.get('ok'):
@@ -195,6 +313,204 @@ def _check_sjva_or_block(mode='html'):
     return Response(message, status=403, mimetype='text/plain')
 
 
+def _epg_cache_dir():
+    path = '/data/tmp/ff_tvh_m3u_epg_cache'
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _epg_cache_xml_path():
+    return os.path.join(_epg_cache_dir(), 'myepg_raw.xml')
+
+
+def _epg_cache_meta_path():
+    return os.path.join(_epg_cache_dir(), 'myepg_raw.meta.json')
+
+
+def _epg_now():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _safe_tag_name(tag):
+    return str(tag).split('}', 1)[-1] if tag else ''
+
+
+def _load_epg_meta():
+    path = _epg_cache_meta_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except Exception as e:
+        logger.warning(f'[ff_tvh_m3u] load epg meta failed: {str(e)}')
+    return {}
+
+
+def _save_epg_meta(meta):
+    try:
+        with open(_epg_cache_meta_path(), 'w', encoding='utf-8') as f:
+            json.dump(meta or {}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f'[ff_tvh_m3u] save epg meta failed: {str(e)}')
+
+
+def _summarize_epg_xml(xml_path, sample_limit=None):
+    channel_count = 0
+    programme_count = 0
+    icon_count = 0
+    sample_channels = []
+    provider_channel_counts = {}
+
+    context = ET.iterparse(xml_path, events=('end',))
+    for _event, elem in context:
+        tag = _safe_tag_name(elem.tag)
+        if tag == 'channel':
+            channel_count += 1
+            channel_id = (elem.attrib.get('id') or '').strip()
+            provider_key = _detect_provider_from_channel_id(channel_id)
+            if provider_key:
+                provider_channel_counts[provider_key] = provider_channel_counts.get(provider_key, 0) + 1
+            display_names = []
+            icon_url = ''
+            for child in list(elem):
+                child_tag = _safe_tag_name(child.tag)
+                if child_tag == 'display-name':
+                    name = (child.text or '').strip()
+                    if name:
+                        display_names.append(name)
+                elif child_tag == 'icon':
+                    src = (child.attrib.get('src') or '').strip()
+                    if src:
+                        icon_url = src
+                        icon_count += 1
+            if sample_limit is None or len(sample_channels) < sample_limit:
+                sample_channels.append({
+                    'id': channel_id,
+                    'name': display_names[0] if display_names else '',
+                    'icon_url': icon_url,
+                    'display_names': display_names,
+                    'provider': provider_key,
+                    'provider_label': EPG_PROVIDER_LABEL_MAP.get(provider_key, ''),
+                })
+            elem.clear()
+        elif tag == 'programme':
+            programme_count += 1
+            elem.clear()
+
+    provider_rows = []
+    for key, label in EPG_PROVIDER_OPTIONS:
+        count = int(provider_channel_counts.get(key, 0) or 0)
+        if count > 0:
+            provider_rows.append({
+                'key': key,
+                'label': label,
+                'count': count,
+            })
+
+    detected_provider_keys = [row['key'] for row in provider_rows]
+    if len(detected_provider_keys) >= 2:
+        provider_mode = 'integrated'
+    elif len(detected_provider_keys) == 1:
+        provider_mode = 'single'
+    else:
+        provider_mode = 'unknown'
+
+    file_size = os.path.getsize(xml_path) if os.path.exists(xml_path) else 0
+    return {
+        'exists': os.path.exists(xml_path),
+        'xml_path': xml_path,
+        'file_size': file_size,
+        'channel_count': channel_count,
+        'programme_count': programme_count,
+        'icon_count': icon_count,
+        'sample_channels': sample_channels,
+        'detected_provider_keys': detected_provider_keys,
+        'provider_rows': provider_rows,
+        'provider_mode': provider_mode,
+    }
+
+
+def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
+    cache_dir = _epg_cache_dir()
+    tmp_download = os.path.join(cache_dir, 'myepg_download.tmp')
+    tmp_xml = os.path.join(cache_dir, 'myepg_raw.tmp.xml')
+    final_xml = _epg_cache_xml_path()
+
+    with requests.get(url, stream=True, timeout=(10, timeout), verify=verify_ssl, headers={'User-Agent': 'ff_tvh_m3u/epg'}) as resp:
+        resp.raise_for_status()
+        with open(tmp_download, 'wb') as fw:
+            for chunk in resp.iter_content(chunk_size=1024 * 128):
+                if chunk:
+                    fw.write(chunk)
+
+    is_gzip = False
+    try:
+        with open(tmp_download, 'rb') as fr:
+            head = fr.read(2)
+            is_gzip = head == b'\x1f\x8b'
+    except Exception:
+        is_gzip = False
+
+    if is_gzip or str(url).lower().endswith('.gz'):
+        with gzip.open(tmp_download, 'rb') as fr, open(tmp_xml, 'wb') as fw:
+            shutil.copyfileobj(fr, fw)
+    else:
+        shutil.copyfile(tmp_download, tmp_xml)
+
+    os.replace(tmp_xml, final_xml)
+    try:
+        os.remove(tmp_download)
+    except Exception:
+        pass
+    return final_xml
+
+
+def _fetch_epg_and_build_meta(url, verify_ssl=True):
+    xml_path = _prepare_epg_xml_from_url(url, verify_ssl=verify_ssl)
+    summary = _summarize_epg_xml(xml_path)
+    meta = {
+        'ret': 'success',
+        'fetched_at': _epg_now(),
+        'source_url': url,
+        'cache_exists': summary.get('exists', False),
+        'file_size': summary.get('file_size', 0),
+        'channel_count': summary.get('channel_count', 0),
+        'programme_count': summary.get('programme_count', 0),
+        'icon_count': summary.get('icon_count', 0),
+        'sample_channels': summary.get('sample_channels', []),
+        'detected_provider_keys': summary.get('detected_provider_keys', []),
+        'provider_rows': summary.get('provider_rows', []),
+        'provider_mode': summary.get('provider_mode', 'unknown'),
+    }
+    _save_epg_meta(meta)
+    return meta
+
+
+def _get_epg_status_payload():
+    meta = _load_epg_meta()
+    xml_path = _epg_cache_xml_path()
+    exists = os.path.exists(xml_path)
+    payload = {
+        'ret': 'success' if exists else 'warning',
+        'cache_exists': exists,
+        'fetched_at': meta.get('fetched_at', ''),
+        'source_url': meta.get('source_url', ''),
+        'file_size': meta.get('file_size', 0),
+        'channel_count': meta.get('channel_count', 0),
+        'programme_count': meta.get('programme_count', 0),
+        'icon_count': meta.get('icon_count', 0),
+        'sample_channels': meta.get('sample_channels', []),
+        'detected_provider_keys': meta.get('detected_provider_keys', []),
+        'provider_rows': meta.get('provider_rows', []),
+        'provider_mode': meta.get('provider_mode', 'unknown'),
+        'msg': '캐시된 EPG 상태를 불러왔습니다.' if exists else '저장된 EPG 캐시가 없습니다.',
+    }
+    return payload
+
+
 class ModuleBasic(PluginModuleBase):
     db_default = {
         'basic_tvh_api_base': '',
@@ -211,7 +527,18 @@ class ModuleBasic(PluginModuleBase):
         'basic_match_last_run_time': '',
         'basic_match_last_count': '0',
         'basic_match_last_unmatched_count': '0',
-        'basic_match_source': '/data/db/ff_tvh_sheet_write.db',
+        'basic_match_source': 'https://ff.aha3011.mywire.org/ff_tvh_sheet_write/api/basic',
+        'basic_match_source_mode': 'remote',
+        'basic_match_source_remote': 'https://ff.aha3011.mywire.org/ff_tvh_sheet_write/api/basic',
+        'basic_epg_xml_url': '',
+        'basic_epg_last_fetch_time': '',
+        'basic_epg_channel_count': '0',
+        'basic_epg_programme_count': '0',
+        'basic_epg_icon_count': '0',
+        'basic_epg_file_size': '0',
+        'basic_epg_provider_priority': 'kt,lgu,sk,daum,naver,wavve,tving,spotv',
+        'basic_epg_provider_enabled': 'kt,lgu,sk,daum,naver,wavve,tving,spotv',
+        'basic_logo_priority': 'custom,kt,wavve,tving,sk',
     }
 
     def __init__(self, P):
@@ -242,12 +569,24 @@ class ModuleBasic(PluginModuleBase):
             arg['m3u_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u")
             arg['m3u_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tvh")
             arg['m3u_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tivimate")
+            arg['epg_raw_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_raw")
+            arg['epg_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tvh")
+            arg['epg_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tivimate")
+            logo_priority_state = _build_logo_priority_state(P.ModelSetting.get('basic_logo_priority') or Task.get_logo_priority_text())
+            arg['logo_priority_text'] = logo_priority_state.get('text', '')
+            arg['logo_priority_items'] = logo_priority_state.get('items', [])
             arg['last_sync_time'] = P.ModelSetting.get('basic_last_sync_time')
             arg['last_sync_count'] = P.ModelSetting.get('basic_last_sync_count')
             arg['match_last_run_time'] = P.ModelSetting.get('basic_match_last_run_time')
             arg['match_last_count'] = P.ModelSetting.get('basic_match_last_count')
             arg['match_last_unmatched_count'] = P.ModelSetting.get('basic_match_last_unmatched_count')
-            arg['match_source'] = P.ModelSetting.get('basic_match_source') or '/data/db/ff_tvh_sheet_write.db'
+            arg['match_source'] = P.ModelSetting.get('basic_match_source') or 'https://ff.aha3011.mywire.org/ff_tvh_sheet_write/api/basic'
+            arg['basic_match_source_mode'] = 'remote'
+            arg['basic_match_source_remote'] = 'https://ff.aha3011.mywire.org/ff_tvh_sheet_write/api/basic'
+            try:
+                arg['match_source_info'] = Task.get_match_source_info()
+            except Exception:
+                arg['match_source_info'] = {}
             arg['grouped_channels'] = ModelChannel.get_grouped()
             arg['tag_count'] = len(ModelTag.get_all())
             arg['channel_count'] = len(ModelChannel.get_all())
@@ -257,6 +596,26 @@ class ModuleBasic(PluginModuleBase):
             arg['assignable_group_names'] = ModelChannel.get_assignable_group_names()
             arg['match_source_info'] = Task.get_match_source_info()
             arg['play_profile_list'] = []
+            epg_meta = _load_epg_meta()
+            arg['basic_epg_xml_url'] = P.ModelSetting.get('basic_epg_xml_url') or ''
+            arg['basic_epg_last_fetch_time'] = P.ModelSetting.get('basic_epg_last_fetch_time') or epg_meta.get('fetched_at', '')
+            arg['basic_epg_channel_count'] = P.ModelSetting.get('basic_epg_channel_count') or str(epg_meta.get('channel_count', 0))
+            arg['basic_epg_programme_count'] = P.ModelSetting.get('basic_epg_programme_count') or str(epg_meta.get('programme_count', 0))
+            arg['basic_epg_icon_count'] = P.ModelSetting.get('basic_epg_icon_count') or str(epg_meta.get('icon_count', 0))
+            arg['basic_epg_file_size'] = P.ModelSetting.get('basic_epg_file_size') or str(epg_meta.get('file_size', 0))
+            arg['epg_sample_channels'] = epg_meta.get('sample_channels', []) or []
+            arg['epg_cache_exists'] = os.path.exists(_epg_cache_xml_path())
+            epg_provider_state = _build_epg_provider_rows(
+                P.ModelSetting.get('basic_epg_provider_enabled') or '',
+                P.ModelSetting.get('basic_epg_provider_priority') or '',
+            )
+            arg['basic_epg_provider_priority'] = epg_provider_state.get('priority_csv', '')
+            arg['basic_epg_provider_enabled'] = epg_provider_state.get('enabled_csv', '')
+            arg['epg_provider_rows'] = epg_provider_state.get('rows', [])
+            arg['epg_provider_enabled_labels'] = epg_provider_state.get('enabled_labels', [])
+            arg['epg_provider_disabled_labels'] = epg_provider_state.get('disabled_labels', [])
+            arg['epg_detected_provider_rows'] = epg_meta.get('provider_rows', []) or []
+            arg['epg_provider_mode'] = epg_meta.get('provider_mode', 'unknown') or 'unknown'
 
             if sub == 'm3u':
                 try:
@@ -278,6 +637,25 @@ class ModuleBasic(PluginModuleBase):
                 if str(arg.get('basic_tvh_use_verify_ssl', '')).strip().lower() in ['true', 'on', '1', 'yes', 'y']
                 else 'False'
             )
+
+            if sub == 'logo':
+                logo_query = str(req.args.get('logo_q') or '').strip()
+                logo_filter = str(req.args.get('logo_filter') or 'all').strip().lower()
+                try:
+                    base_url = request.host_url.rstrip('/')
+                except Exception:
+                    base_url = ''
+                arg['logo_query'] = logo_query
+                arg['logo_filter'] = logo_filter
+                arg['logo_preview_rows'] = Task.get_logo_preview_rows(
+                    base_url=base_url,
+                    query=logo_query,
+                    filter_mode=logo_filter,
+                )
+                arg['logo_preview_count'] = len(arg['logo_preview_rows'])
+            elif sub == 'logoadd':
+                arg['custom_logo_asset_dir'] = Task.get_custom_logo_asset_dir()
+
             arg['basic_tvh_include_auth_in_url'] = (
                 'True'
                 if str(arg.get('basic_tvh_include_auth_in_url', '')).strip().lower() in ['true', 'on', '1', 'yes', 'y']
@@ -322,6 +700,73 @@ class ModuleBasic(PluginModuleBase):
             elif sub == 'load_play_profiles':
                 _save_runtime_settings(req)
                 return jsonify(Task.get_play_profiles())
+
+            elif sub == 'save_logo_priority':
+                raw_priority = request.form.get('logo_priority', '')
+                state = _build_logo_priority_state(raw_priority)
+                try:
+                    P.ModelSetting.set('basic_logo_priority', state.get('text', ''))
+                    return jsonify({
+                        'ret': 'success',
+                        'msg': '로고 우선순위를 저장했습니다.',
+                        'logo_priority_text': state.get('text', ''),
+                        'logo_priority_items': state.get('items', []),
+                    })
+                except Exception as e:
+                    logger.exception(f'[ff_tvh_m3u] save_logo_priority failed: {str(e)}')
+                    return jsonify({'ret': 'danger', 'msg': f'로고 우선순위 저장 실패: {str(e)}'})
+
+
+            elif sub == 'logo_preview_select':
+                return jsonify({
+                    'ret': 'warning',
+                    'msg': '로고 선택 저장은 관리자 FF의 ff_tvh_sheet_write 플러그인에서 처리하세요.',
+                })
+
+            elif sub == 'logo_preview_clear':
+                return jsonify({
+                    'ret': 'warning',
+                    'msg': '로고 선택 초기화는 관리자 FF의 ff_tvh_sheet_write 플러그인에서 처리하세요.',
+                })
+
+            elif sub == 'upload_custom_logo':
+                return jsonify({
+                    'ret': 'warning',
+                    'msg': '커스텀 로고 업로드는 관리자 FF의 ff_tvh_sheet_write 플러그인에서 처리하세요.',
+                })
+
+            elif sub == 'epg_status':
+                return jsonify(_get_epg_status_payload())
+
+            elif sub == 'epg_fetch':
+                _save_runtime_settings(req)
+                epg_url = (P.ModelSetting.get('basic_epg_xml_url') or request.form.get('basic_epg_xml_url') or '').strip()
+                if not epg_url:
+                    return jsonify({'ret': 'warning', 'msg': 'myepg XML 주소를 먼저 입력하세요.'})
+                try:
+                    verify_ssl = str(P.ModelSetting.get('basic_tvh_use_verify_ssl') or 'False').strip().lower() in ['true', 'on', '1', 'yes', 'y']
+                    meta = _fetch_epg_and_build_meta(epg_url, verify_ssl=verify_ssl)
+                    P.ModelSetting.set('basic_epg_last_fetch_time', meta.get('fetched_at', ''))
+                    P.ModelSetting.set('basic_epg_channel_count', str(meta.get('channel_count', 0)))
+                    P.ModelSetting.set('basic_epg_programme_count', str(meta.get('programme_count', 0)))
+                    P.ModelSetting.set('basic_epg_icon_count', str(meta.get('icon_count', 0)))
+                    P.ModelSetting.set('basic_epg_file_size', str(meta.get('file_size', 0)))
+                    provider_rows = meta.get('provider_rows', []) or []
+                    if meta.get('provider_mode') == 'integrated':
+                        provider_msg = ' / 통합 EPG 감지: ' + ', '.join([f"{row.get('label')}({row.get('count')})" for row in provider_rows])
+                    elif meta.get('provider_mode') == 'single' and provider_rows:
+                        row = provider_rows[0]
+                        provider_msg = f" / 단일 사업자 EPG 감지: {row.get('label')}({row.get('count')}) - 우선순위 설정과 무관하게 계속 진행 가능"
+                    else:
+                        provider_msg = ''
+                    return jsonify({
+                        'ret': 'success',
+                        'msg': f"EPG 원본 불러오기 완료 / 채널 {meta.get('channel_count', 0)} / 편성 {meta.get('programme_count', 0)}{provider_msg}",
+                        **meta,
+                    })
+                except Exception as e:
+                    logger.exception(f'[ff_tvh_m3u] epg_fetch failed: {str(e)}')
+                    return jsonify({'ret': 'danger', 'msg': f'EPG 원본 불러오기 실패: {str(e)}'})
 
             elif sub == 'sync_channels':
                 _save_runtime_settings(req)
@@ -428,6 +873,38 @@ class ModuleBasic(PluginModuleBase):
                     text,
                     mimetype='audio/x-mpegurl',
                     headers={'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
+                )
+
+            elif sub == 'epg_raw':
+                xml_path = _epg_cache_xml_path()
+                if not os.path.exists(xml_path):
+                    return Response('EPG cache not found', status=404, mimetype='text/plain')
+                with open(xml_path, 'rb') as f:
+                    data = f.read()
+                return Response(
+                    data,
+                    mimetype='application/xml',
+                    headers={'Content-Disposition': 'inline; filename=myepg_raw.xml'}
+                )
+
+            elif sub == 'epg_tvh':
+                data = Task.build_epg_xml(target='tvh')
+                if not data:
+                    return Response('EPG cache not found', status=404, mimetype='text/plain')
+                return Response(
+                    data,
+                    mimetype='application/xml',
+                    headers={'Content-Disposition': 'inline; filename=tvh_epg.xml'}
+                )
+
+            elif sub == 'epg_tivimate':
+                data = Task.build_epg_xml(target='tivimate')
+                if not data:
+                    return Response('EPG cache not found', status=404, mimetype='text/plain')
+                return Response(
+                    data,
+                    mimetype='application/xml',
+                    headers={'Content-Disposition': 'inline; filename=tivimate_epg.xml'}
                 )
 
             return jsonify({'ret': 'warning', 'msg': 'unknown api'})

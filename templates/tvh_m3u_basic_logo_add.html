@@ -1,0 +1,103 @@
+<div class="card">
+  <div class="card-header"><strong>커스텀 로고 개별 추가</strong></div>
+  <div class="card-body">
+    <div class="ff-mini-note">
+      업로드한 로고 파일은 <code>{{ arg.get('custom_logo_asset_dir', '') }}</code> 에 저장되고,
+      동시에 <code>ff_tvh_sheet_write.db</code> 에 등록됩니다.
+    </div>
+    <div class="alert alert-info mt-3 mb-0">
+      <strong>저장 방식</strong><br>
+      파일은 M3U 플러그인 내부 자산 폴더에 저장합니다. 이렇게 저장된 파일은 이후 GitHub 업데이트 대상 자산으로 그대로 사용할 수 있습니다.
+    </div>
+
+    <div class="mt-4" style="max-width:760px;">
+      <div class="form-group">
+        <label>원본 채널명</label>
+        <input type="text" class="form-control" id="custom-logo-source-name" placeholder="예: CJ온스타일+">
+        <small class="form-text text-muted">쓰기 플러그인에 저장할 원본 채널명입니다.</small>
+      </div>
+
+      <div class="form-group">
+        <label>표준 채널명 (선택)</label>
+        <input type="text" class="form-control" id="custom-logo-standard-name" placeholder="예: CJ온스타일플러스">
+        <small class="form-text text-muted">입력하면 이 이름 기준으로 먼저 매칭합니다. 비워두면 원본 채널명으로 자동 매칭을 시도합니다.</small>
+      </div>
+
+      <div class="form-group">
+        <label>AKA / 별칭 (선택)</label>
+        <input type="text" class="form-control" id="custom-logo-aka-name" placeholder="예: CJ 온스타일+">
+      </div>
+
+      <div class="form-group">
+        <label>로고 이미지 파일</label>
+        <input type="file" class="form-control-file" id="custom-logo-file" accept=".png,.jpg,.jpeg,.gif,.webp,.svg,image/*">
+      </div>
+
+      <div class="d-flex align-items-center" style="gap:8px; flex-wrap:wrap;">
+        <button type="button" class="btn btn-primary" id="btn-custom-logo-upload">업로드 및 저장</button>
+        <span id="custom-logo-upload-result" class="text-muted"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var sourceEl = document.getElementById('custom-logo-source-name');
+  var standardEl = document.getElementById('custom-logo-standard-name');
+  var akaEl = document.getElementById('custom-logo-aka-name');
+  var fileEl = document.getElementById('custom-logo-file');
+  var resultEl = document.getElementById('custom-logo-upload-result');
+  var btn = document.getElementById('btn-custom-logo-upload');
+  if (!btn) return;
+
+  function setResult(msg, isError) {
+    if (!resultEl) return;
+    resultEl.textContent = msg || '';
+    resultEl.style.color = isError ? '#c0392b' : '#666';
+  }
+
+  btn.addEventListener('click', function() {
+    var sourceName = (sourceEl && sourceEl.value || '').trim();
+    var standardName = (standardEl && standardEl.value || '').trim();
+    var akaName = (akaEl && akaEl.value || '').trim();
+    var file = fileEl && fileEl.files && fileEl.files[0];
+
+    if (!sourceName) {
+      setResult('원본 채널명을 입력하세요.', true);
+      return;
+    }
+    if (!file) {
+      setResult('업로드할 로고 파일을 선택하세요.', true);
+      return;
+    }
+
+    var formData = new FormData();
+    formData.append('source_channel_name', sourceName);
+    formData.append('standard_name', standardName);
+    formData.append('aka_name', akaName);
+    formData.append('logo_file', file);
+
+    setResult('업로드 중...', false);
+    fetch('/{{ arg["package_name"] }}/ajax/{{ arg["ajax_sub"] }}/upload_custom_logo', {
+      method: 'POST',
+      body: formData
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+      if (data.ret !== 'success') {
+        setResult(data.msg || '업로드 실패', true);
+        return;
+      }
+      var parts = [data.msg || '저장 완료'];
+      if (data.standard_name) parts.push('표준채널: ' + data.standard_name);
+      if (data.stored_filename) parts.push('파일: ' + data.stored_filename);
+      setResult(parts.join(' / '), false);
+      if (fileEl) fileEl.value = '';
+    })
+    .catch(function(err) {
+      setResult('업로드 실패: ' + err, true);
+    });
+  });
+})();
+</script>
