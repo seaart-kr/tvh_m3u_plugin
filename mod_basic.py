@@ -551,6 +551,8 @@ class ModuleBasic(PluginModuleBase):
                 return gate
 
             sub = sub or 'sync'
+            if sub == 'logoadd':
+                sub = 'addlogo'
 
             referrer = request.headers.get('Referer', '') or ''
             is_internal_referrer = f'/{P.package_name}/' in referrer
@@ -653,7 +655,7 @@ class ModuleBasic(PluginModuleBase):
                     filter_mode=logo_filter,
                 )
                 arg['logo_preview_count'] = len(arg['logo_preview_rows'])
-            elif sub == 'logoadd':
+            elif sub == 'addlogo':
                 arg['custom_logo_asset_dir'] = Task.get_custom_logo_asset_dir()
 
             arg['basic_tvh_include_auth_in_url'] = (
