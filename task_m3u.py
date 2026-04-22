@@ -176,12 +176,38 @@ class TaskM3U(TaskBase):
         text = str(url_value or '').strip()
         if not text:
             return ''
+        text = TaskM3U._normalize_asset_layout_logo_url(text)
         assets_prefix = TaskM3U.ASSETS_PATH_PREFIX.rstrip('/')
         static_prefix = TaskM3U.STATIC_HOST_PATH.rstrip('/')
         text = text.replace(assets_prefix + '/', static_prefix + '/')
         if text.endswith(assets_prefix):
             text = text[:-len(assets_prefix)] + static_prefix
         return text
+
+    @staticmethod
+    def _normalize_asset_layout_logo_url(url_value):
+        text = str(url_value or '').strip()
+        if not text:
+            return ''
+
+        assets_prefix = TaskM3U.ASSETS_PATH_PREFIX.rstrip('/') + '/'
+        if assets_prefix not in text:
+            return text
+
+        rel = text.split(assets_prefix, 1)[-1].lstrip('/')
+        if not rel or '/' not in rel:
+            return text
+
+        nested_path = os.path.join(TaskM3U.UPLOAD_ASSET_DIR, *rel.split('/'))
+        flat_name = os.path.basename(rel)
+        flat_path = os.path.join(TaskM3U.UPLOAD_ASSET_DIR, flat_name)
+
+        if os.path.exists(nested_path):
+            return text
+        if not os.path.exists(flat_path):
+            return text
+
+        return text.replace(assets_prefix + rel, assets_prefix + flat_name)
 
     @staticmethod
     def _replace_placeholder_url(url_value, base_url=''):
@@ -1141,7 +1167,10 @@ class TaskM3U(TaskBase):
         if suffix.startswith('/tvh_m3u_plugin/docs/assets/'):
             rel = suffix[len('/tvh_m3u_plugin/docs/assets/'):].lstrip('/')
             candidate = os.path.join('/data/plugins/tvh_m3u_plugin/docs/assets', rel)
-            return candidate if os.path.exists(candidate) else ''
+            if os.path.exists(candidate):
+                return candidate
+            flat_candidate = os.path.join('/data/plugins/tvh_m3u_plugin/docs/assets', os.path.basename(rel))
+            return flat_candidate if os.path.exists(flat_candidate) else ''
         return ''
 
     @staticmethod
