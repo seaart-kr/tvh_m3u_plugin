@@ -1,7 +1,7 @@
 <div class="card mb-4">
   <div class="card-header"><strong>API 안내</strong></div>
   <div class="card-body">
-    <div class="ff-api-note">아래 링크를 복사해서 TVH 테스트용 또는 TiviMate용으로 사용할 수 있습니다. 기본 링크는 TiviMate용과 동일하게 동작합니다.</div>
+    <div class="ff-api-note">아래 링크를 복사해서 TVH 테스트용 또는 TiviMate용으로 사용할 수 있습니다.</div>
     <div class="mt-2" style="color:#666;">현재 로고 우선순위: <strong>{{ arg.get('logo_priority_text', 'custom,kt,wavve,tving,sk') }}</strong></div>
   </div>
 </div>
@@ -29,15 +29,6 @@
       </div>
     </div>
 
-    <div class="form-group row" style="margin-bottom:0;">
-      <label class="col-sm-3 col-form-label">기본 링크</label>
-      <div class="col-sm-9">
-        <div class="input-group">
-          <a href="{{ arg['m3u_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_url'] }}</a>
-        </div>
-        <small class="form-text text-muted">기본 링크 = TiviMate용 링크</small>
-      </div>
-    </div>
   </div>
 </div>
 
