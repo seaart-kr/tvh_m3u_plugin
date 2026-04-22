@@ -67,6 +67,7 @@ def init_db():
         group_name TEXT DEFAULT '그룹 없음',
         manual_group_name TEXT DEFAULT '',
         sheet_group_name TEXT DEFAULT '',
+        sheet_channel_id TEXT DEFAULT '',
         sheet_logo_url TEXT DEFAULT '',
         raw_data TEXT DEFAULT '{}',
         created_time TEXT,
@@ -81,6 +82,8 @@ def init_db():
         cur.execute("ALTER TABLE ff_tvh_m3u_channel ADD COLUMN manual_group_name TEXT DEFAULT ''")
     if 'sheet_group_name' not in channel_columns:
         cur.execute("ALTER TABLE ff_tvh_m3u_channel ADD COLUMN sheet_group_name TEXT DEFAULT ''")
+    if 'sheet_channel_id' not in channel_columns:
+        cur.execute("ALTER TABLE ff_tvh_m3u_channel ADD COLUMN sheet_channel_id TEXT DEFAULT ''")
     if 'sheet_logo_url' not in channel_columns:
         cur.execute("ALTER TABLE ff_tvh_m3u_channel ADD COLUMN sheet_logo_url TEXT DEFAULT ''")
 
@@ -119,8 +122,120 @@ def init_db():
     )
     """)
 
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS ff_tvh_m3u_logo_override (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_uuid TEXT UNIQUE NOT NULL,
+        channel_name TEXT DEFAULT '',
+        channel_name_norm TEXT DEFAULT '',
+        selected_provider TEXT DEFAULT '',
+        logo_url_template TEXT DEFAULT '',
+        created_time TEXT,
+        updated_time TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
+
+
+class ModelLogoOverride:
+    def __init__(self, channel_uuid='', channel_name='', channel_name_norm='', selected_provider='', logo_url_template='', created_time=None, updated_time=None, id=None):
+        self.id = id
+        self.channel_uuid = channel_uuid
+        self.channel_name = channel_name
+        self.channel_name_norm = channel_name_norm
+        self.selected_provider = selected_provider
+        self.logo_url_template = logo_url_template
+        self.created_time = created_time
+        self.updated_time = updated_time
+
+    @staticmethod
+    def from_row(row):
+        return ModelLogoOverride(
+            id=row['id'],
+            channel_uuid=row['channel_uuid'],
+            channel_name=row['channel_name'],
+            channel_name_norm=row['channel_name_norm'],
+            selected_provider=row['selected_provider'],
+            logo_url_template=row['logo_url_template'],
+            created_time=row['created_time'],
+            updated_time=row['updated_time'],
+        )
+
+    @staticmethod
+    def get_all():
+        init_db()
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM ff_tvh_m3u_logo_override ORDER BY channel_name ASC, channel_uuid ASC")
+        rows = [ModelLogoOverride.from_row(row) for row in cur.fetchall()]
+        conn.close()
+        return rows
+
+    @staticmethod
+    def get_maps():
+        rows = ModelLogoOverride.get_all()
+        uuid_map = {}
+        name_map = {}
+        for row in rows:
+            item = {
+                'channel_uuid': row.channel_uuid,
+                'channel_name': row.channel_name,
+                'channel_name_norm': row.channel_name_norm,
+                'selected_provider': row.selected_provider,
+                'logo_url_template': row.logo_url_template,
+                'updated_time': row.updated_time,
+            }
+            if row.channel_uuid:
+                uuid_map[row.channel_uuid] = item
+            if row.channel_name_norm:
+                name_map[row.channel_name_norm] = item
+        return {'uuid_map': uuid_map, 'name_map': name_map}
+
+    @staticmethod
+    def save(channel_uuid, channel_name, selected_provider, logo_url_template):
+        init_db()
+        channel_uuid = str(channel_uuid or '').strip()
+        channel_name = str(channel_name or '').strip()
+        channel_name_norm = normalize_channel_name(channel_name)
+        selected_provider = str(selected_provider or '').strip().lower()
+        logo_url_template = str(logo_url_template or '').strip()
+        if not channel_uuid:
+            return False
+        now = now_str()
+        conn = get_conn()
+        cur = conn.cursor()
+        row = cur.execute("SELECT id, created_time FROM ff_tvh_m3u_logo_override WHERE channel_uuid = ? LIMIT 1", (channel_uuid,)).fetchone()
+        if row:
+            created_time = row['created_time'] or now
+            cur.execute(
+                "UPDATE ff_tvh_m3u_logo_override SET channel_name=?, channel_name_norm=?, selected_provider=?, logo_url_template=?, updated_time=? WHERE channel_uuid=?",
+                (channel_name, channel_name_norm, selected_provider, logo_url_template, now, channel_uuid),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO ff_tvh_m3u_logo_override (channel_uuid, channel_name, channel_name_norm, selected_provider, logo_url_template, created_time, updated_time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (channel_uuid, channel_name, channel_name_norm, selected_provider, logo_url_template, now, now),
+            )
+        conn.commit()
+        conn.close()
+        return True
+
+    @staticmethod
+    def delete(channel_uuid):
+        init_db()
+        channel_uuid = str(channel_uuid or '').strip()
+        if not channel_uuid:
+            return 0
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM ff_tvh_m3u_logo_override WHERE channel_uuid = ?", (channel_uuid,))
+        changed = cur.rowcount
+        conn.commit()
+        conn.close()
+        return changed
 
 
 class ModelTag:
@@ -409,6 +524,7 @@ class ModelChannel:
         group_name='그룹 없음',
         manual_group_name='',
         sheet_group_name='',
+        sheet_channel_id='',
         sheet_logo_url='',
         raw_data='{}',
         created_time=None,
@@ -424,6 +540,7 @@ class ModelChannel:
         self.group_name = group_name
         self.manual_group_name = manual_group_name
         self.sheet_group_name = sheet_group_name
+        self.sheet_channel_id = sheet_channel_id
         self.sheet_logo_url = sheet_logo_url
         self.raw_data = raw_data
         self.created_time = created_time
@@ -440,6 +557,7 @@ class ModelChannel:
             'group_name': self.group_name,
             'manual_group_name': self.manual_group_name,
             'sheet_group_name': self.sheet_group_name,
+            'sheet_channel_id': self.sheet_channel_id,
             'sheet_logo_url': self.sheet_logo_url,
             'effective_group_name': self.get_effective_group_name(),
             'raw_data': self.raw_data,
@@ -474,6 +592,7 @@ class ModelChannel:
             group_name=row['group_name'],
             manual_group_name=(row['manual_group_name'] if 'manual_group_name' in keys else ''),
             sheet_group_name=(row['sheet_group_name'] if 'sheet_group_name' in keys else ''),
+            sheet_channel_id=(row['sheet_channel_id'] if 'sheet_channel_id' in keys else ''),
             sheet_logo_url=(row['sheet_logo_url'] if 'sheet_logo_url' in keys else ''),
             raw_data=row['raw_data'],
             created_time=row['created_time'],
@@ -534,8 +653,8 @@ class ModelChannel:
             cur.execute(
                 """
                 INSERT INTO ff_tvh_m3u_channel
-                (channel_uuid, number, name, enabled, raw_tags, group_name, manual_group_name, sheet_group_name, sheet_logo_url, raw_data, created_time, updated_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (channel_uuid, number, name, enabled, raw_tags, group_name, manual_group_name, sheet_group_name, sheet_channel_id, sheet_logo_url, raw_data, created_time, updated_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item.get('channel_uuid', ''),
@@ -546,6 +665,7 @@ class ModelChannel:
                     item.get('group_name', '그룹 없음'),
                     item.get('manual_group_name', ''),
                     item.get('sheet_group_name', ''),
+                    item.get('sheet_channel_id', ''),
                     item.get('sheet_logo_url', ''),
                     item.get('raw_data', '{}'),
                     now,
@@ -644,7 +764,7 @@ class ModelChannel:
         now = now_str()
 
         cur.execute(
-            "UPDATE ff_tvh_m3u_channel SET sheet_group_name = '', sheet_logo_url = '', updated_time = ?",
+            "UPDATE ff_tvh_m3u_channel SET sheet_group_name = '', sheet_channel_id = '', sheet_logo_url = '', updated_time = ?",
             (now,),
         )
 
@@ -654,10 +774,11 @@ class ModelChannel:
             if not channel_uuid:
                 continue
             sheet_group_name = str(item.get('sheet_group_name') or '').strip()
+            sheet_channel_id = str(item.get('sheet_channel_id') or '').strip()
             sheet_logo_url = str(item.get('sheet_logo_url') or '').strip()
             cur.execute(
-                "UPDATE ff_tvh_m3u_channel SET sheet_group_name = ?, sheet_logo_url = ?, updated_time = ? WHERE channel_uuid = ?",
-                (sheet_group_name, sheet_logo_url, now, channel_uuid),
+                "UPDATE ff_tvh_m3u_channel SET sheet_group_name = ?, sheet_channel_id = ?, sheet_logo_url = ?, updated_time = ? WHERE channel_uuid = ?",
+                (sheet_group_name, sheet_channel_id, sheet_logo_url, now, channel_uuid),
             )
             changed += cur.rowcount
 
@@ -672,7 +793,7 @@ def clear_sheet_matches():
         cur = conn.cursor()
         now = now_str()
         cur.execute(
-            "UPDATE ff_tvh_m3u_channel SET sheet_group_name = '', sheet_logo_url = '', updated_time = ? WHERE COALESCE(sheet_group_name, '') != '' OR COALESCE(sheet_logo_url, '') != ''",
+            "UPDATE ff_tvh_m3u_channel SET sheet_group_name = '', sheet_channel_id = '', sheet_logo_url = '', updated_time = ? WHERE COALESCE(sheet_group_name, '') != '' OR COALESCE(sheet_channel_id, '') != '' OR COALESCE(sheet_logo_url, '') != ''",
             (now,),
         )
         changed = cur.rowcount
