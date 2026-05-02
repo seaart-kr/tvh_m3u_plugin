@@ -43,11 +43,11 @@
     <div class="form-group row">
       <label class="col-sm-3 col-form-label">EPG 자동 갱신 사용</label>
       <div class="col-sm-9">
-        <input type="hidden" name="basic_epg_auto_enabled" value="False">
         <label style="display:flex; align-items:center; gap:8px; margin-top:7px;">
           <input type="checkbox" id="basic_epg_auto_enabled" name="basic_epg_auto_enabled" value="True" {% if arg.get('basic_epg_auto_enabled') == 'True' %}checked{% endif %}>
           <span>사용</span>
         </label>
+        <input type="hidden" name="basic_epg_auto_enabled" value="False">
         <small class="form-text text-muted">켜두면 아래 시각에 매일 myepg XML을 다시 불러와 캐시를 갱신합니다.</small>
       </div>
     </div>
