@@ -14,7 +14,7 @@ from .task_m3u import TaskM3U
 WRITE_DB_PATH = '/data/db/ff_tvh_sheet_write.db'
 CUSTOM_LOGO_MAX_BYTES = 5 * 1024 * 1024
 CUSTOM_LOGO_ALLOWED_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']
-DEFAULT_MIRROR_URL = 'https://ff.aha3011.mywire.org/tvh_m3u_plugin/api/custom_logo_mirror'
+DEFAULT_MIRROR_URL = 'https://ff.aha3011.mywire.org/tvh_m3u_plugin/normal/custom_logo_mirror'
 
 
 def _now():

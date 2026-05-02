@@ -874,7 +874,7 @@ class ModuleBasic(PluginModuleBase):
         'basic_epg_auto_time': '03:30',
         'basic_epg_auto_last_run_date': '',
         'basic_epg_auto_last_result': '',
-        'basic_custom_logo_mirror_url': 'https://ff.aha3011.mywire.org/tvh_m3u_plugin/api/custom_logo_mirror',
+        'basic_custom_logo_mirror_url': 'https://ff.aha3011.mywire.org/tvh_m3u_plugin/normal/custom_logo_mirror',
         'basic_custom_logo_mirror_token': '',
         'basic_logo_priority': 'custom,kt,wavve,tving,sk',
     }
@@ -1184,6 +1184,15 @@ class ModuleBasic(PluginModuleBase):
 
         except Exception as e:
             logger.exception(f'[ff_tvh_m3u] process_ajax exception: {str(e)}')
+            return jsonify({'ret': 'danger', 'msg': str(e)})
+
+    def process_normal(self, sub, req):
+        try:
+            if sub == 'custom_logo_mirror':
+                return jsonify(handle_custom_logo_mirror(req))
+            return jsonify({'ret': 'warning', 'msg': 'unknown normal request'})
+        except Exception as e:
+            logger.exception(f'[ff_tvh_m3u] process_normal exception: {str(e)}')
             return jsonify({'ret': 'danger', 'msg': str(e)})
 
     def process_api(self, sub, req):
