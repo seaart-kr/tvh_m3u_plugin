@@ -36,6 +36,147 @@ function clearButtonLoading($btn) {
   if (originalText) $btn.html(originalText);
 }
 
+
+function injectTopEpgTab() {
+  if (!package_name) return;
+
+  var syncPath = '/' + package_name + '/basic/sync';
+  var epgPath = '/' + package_name + '/basic/epg';
+  var m3uPath = '/' + package_name + '/basic/m3u';
+  var apiPath = '/' + package_name + '/basic/api';
+
+  function hasPath(href, path) {
+    return String(href || '').indexOf(path) !== -1;
+  }
+
+  var $syncLink = null;
+  $('a[href]').each(function(){
+    var $a = $(this);
+    var href = $a.attr('href') || '';
+    if (!hasPath(href, syncPath)) return;
+
+    var $container = $a.closest('ul, .nav, .nav-tabs, .nav-pills, .list-group');
+    if ($container.length === 0) return;
+
+    var hasM3u = $container.find('a[href*="' + m3uPath + '"]').length > 0;
+    var hasApi = $container.find('a[href*="' + apiPath + '"]').length > 0;
+    if (!hasM3u || !hasApi) return;
+
+    $syncLink = $a;
+    return false;
+  });
+
+  if (!$syncLink || $syncLink.length === 0) return;
+
+  var $container = $syncLink.closest('ul, .nav, .nav-tabs, .nav-pills, .list-group');
+  if ($container.find('a[href*="' + epgPath + '"]').length > 0) {
+    if (page_sub === 'epg') {
+      $container.find('.active').removeClass('active');
+      $container.find('a[href*="' + epgPath + '"]').addClass('active').closest('.nav-item, li').addClass('active');
+    }
+    return;
+  }
+
+  var $syncItem = $syncLink.closest('.nav-item, li');
+  if ($syncItem.length) {
+    var $newItem = $syncItem.clone(false, false);
+    $newItem.removeClass('active');
+    var $newLink = $newItem.find('a').first();
+    if ($newLink.length === 0) {
+      $newLink = $('<a></a>');
+      $newItem.empty().append($newLink);
+    }
+    $newLink.attr('href', epgPath).text('EPG 설정');
+    $newLink.removeClass('active');
+    if (page_sub === 'epg') {
+      $container.find('.active').removeClass('active');
+      $newItem.addClass('active');
+      $newLink.addClass('active');
+    }
+    $syncItem.after($newItem);
+    return;
+  }
+
+  var $newLinkOnly = $syncLink.clone(false, false);
+  $newLinkOnly.attr('href', epgPath).text('EPG 설정').removeClass('active');
+  if (page_sub === 'epg') {
+    $container.find('.active').removeClass('active');
+    $newLinkOnly.addClass('active');
+  }
+  $syncLink.after($newLinkOnly);
+}
+
+function updateEpgProviderPriorityState() {
+  var $list = $('#epg_provider_priority_list');
+  if ($list.length === 0) return;
+
+  var priority = [];
+  var enabledLabels = [];
+  var disabledLabels = [];
+
+  $list.find('.ff-epg-provider-row').each(function(index){
+    var $row = $(this);
+    var key = String($row.data('provider-key') || '').trim();
+    var enabled = String($row.attr('data-enabled') || '').toLowerCase() === 'true';
+    var label = $.trim($row.find('.ff-epg-provider-label').text() || key);
+    if (!key) return;
+
+    priority.push(key);
+    $row.find('.epg-rank-badge').text((index + 1) + '순위');
+
+    if (enabled) enabledLabels.push(label);
+    else disabledLabels.push(label);
+  });
+
+  var enabledKeys = [];
+  $list.find('.ff-epg-provider-row').each(function(){
+    var $row = $(this);
+    var key = String($row.data('provider-key') || '').trim();
+    var enabled = String($row.attr('data-enabled') || '').toLowerCase() === 'true';
+    if (enabled && key) enabledKeys.push(key);
+  });
+
+  $('#basic_epg_provider_priority').val(priority.join(','));
+  $('#basic_epg_provider_enabled').val(enabledKeys.join(','));
+  $('#epg_provider_enabled_preview').text(enabledLabels.length ? enabledLabels.join(' > ') : '-');
+  $('#epg_provider_disabled_preview').text(disabledLabels.length ? disabledLabels.join(', ') : '-');
+}
+
+$(document).ready(function(){
+  updateEpgProviderPriorityState();
+});
+
+$("body").on('click', '.epg-provider-toggle-btn', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  var $row = $btn.closest('.ff-epg-provider-row');
+  var enabled = String($row.attr('data-enabled') || '').toLowerCase() === 'true';
+  enabled = !enabled;
+  $row.attr('data-enabled', enabled ? 'true' : 'false');
+  $btn.toggleClass('btn-primary', enabled).toggleClass('btn-outline-secondary', !enabled).text(enabled ? 'On' : 'Off');
+  updateEpgProviderPriorityState();
+});
+
+$("body").on('click', '.epg-provider-up-btn', function(e){
+  e.preventDefault();
+  var $row = $(this).closest('.ff-epg-provider-row');
+  var $prev = $row.prev('.ff-epg-provider-row');
+  if ($prev.length) {
+    $row.insertBefore($prev);
+    updateEpgProviderPriorityState();
+  }
+});
+
+$("body").on('click', '.epg-provider-down-btn', function(e){
+  e.preventDefault();
+  var $row = $(this).closest('.ff-epg-provider-row');
+  var $next = $row.next('.ff-epg-provider-row');
+  if ($next.length) {
+    $row.insertAfter($next);
+    updateEpgProviderPriorityState();
+  }
+});
+
 function renderAdminLoginResult(ret) {
   var lines = [];
   if (ret && ret.summary) {
@@ -81,7 +222,68 @@ function runPreviewM3u($btn, loadingText) {
   });
 }
 
+function renderEpgStatus(ret) {
+  if (!ret) return;
+  $('#epg_last_fetch_time').text(ret.fetched_at || '-');
+  $('#epg_channel_count').text(ret.channel_count || 0);
+  $('#epg_programme_count').text(ret.programme_count || 0);
+  $('#epg_icon_count').text(ret.icon_count || 0);
+  $('#epg_file_size').text(ret.file_size || 0);
+  $('#epg_cache_state').text(ret.cache_exists ? '있음' : '없음');
+
+  var providerModeText = '미확인';
+  if (ret.provider_mode === 'integrated') providerModeText = '통합';
+  else if (ret.provider_mode === 'single') providerModeText = '단일';
+  $('#epg_provider_mode').text(providerModeText);
+
+  var providerPreview = '-';
+  if (ret.provider_rows && ret.provider_rows.length) {
+    providerPreview = ret.provider_rows.map(function(row){
+      return String(row.label || row.key || '') + '(' + String(row.count || 0) + ')';
+    }).join(', ');
+  }
+  $('#epg_detected_provider_preview').text(providerPreview);
+
+  var $tbody = $('#epg_sample_tbody');
+  if ($tbody.length) {
+    $tbody.empty();
+    var list = ret.sample_channels || [];
+    if (!list.length) {
+      $tbody.append('<tr><td colspan="5" class="text-muted">표시할 샘플 채널이 없습니다.</td></tr>');
+    } else {
+      list.forEach(function(item){
+        var names = (item.display_names || []).join(' / ');
+        var row = '<tr>' +
+          '<td><code>' + escapeHtml(item.id || '') + '</code></td>' +
+          '<td>' + escapeHtml(item.name || '') + '</td>' +
+          '<td>' + escapeHtml(item.provider_label || '') + '</td>' +
+          '<td>' + escapeHtml(names || '') + '</td>' +
+          '<td>' + (item.icon_url ? '<a href="' + escapeHtml(item.icon_url) + '" target="_blank">있음</a>' : '-') + '</td>' +
+          '</tr>';
+        $tbody.append(row);
+      });
+    }
+  }
+
+  var lines = [];
+  lines.push('캐시 상태: ' + (ret.cache_exists ? '있음' : '없음'));
+  lines.push('채널 수: ' + (ret.channel_count || 0));
+  lines.push('편성 수: ' + (ret.programme_count || 0));
+  lines.push('로고 수: ' + (ret.icon_count || 0));
+  lines.push('감지 형태: ' + providerModeText);
+  if (ret.provider_rows && ret.provider_rows.length) {
+    lines.push('감지 사업자: ' + ret.provider_rows.map(function(row){ return String(row.label || row.key || '') + '(' + String(row.count || 0) + ')'; }).join(', '));
+  }
+  if (ret.provider_mode === 'single') {
+    lines.push('단일 사업자 EPG여도 현재 우선순위 설정을 유지한 채 진행 가능합니다.');
+  }
+  if (ret.msg) lines.push(ret.msg);
+  $('#epg_result').text(lines.join('\n'));
+}
+
 $(document).ready(function(){
+  injectTopEpgTab();
+
   var currentProfile = $('#basic_tvh_stream_profile').val() || '';
   if (currentProfile && $('#play_profile_select').length > 0) {
     $('#play_profile_select').val(currentProfile);
@@ -106,6 +308,93 @@ $("body").on('click', '#manual_save_btn_tvh', function(e){
       notify('저장 요청 실패', 'danger');
     },
     complete: function() {
+      clearButtonLoading($btn);
+    }
+  });
+});
+
+$("body").on('click', '#manual_save_btn_epg', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  setButtonLoading($btn, '저장중');
+
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/setting_save',
+    type: 'POST',
+    cache: false,
+    data: $('#setting').serialize(),
+    dataType: 'json',
+    success: function(ret) {
+      if (ret.msg != null) notify(ret.msg, ret.ret);
+      $('#epg_result').text('EPG 설정을 저장했습니다.');
+    },
+    error: function() {
+      notify('EPG 설정 저장 요청 실패', 'danger');
+    },
+    complete: function() {
+      clearButtonLoading($btn);
+    }
+  });
+});
+
+$("body").on('click', '#epg_status_btn', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  setButtonLoading($btn, '확인중');
+
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/epg_status',
+    type: 'POST',
+    cache: false,
+    dataType: 'json',
+    success: function(ret) {
+      renderEpgStatus(ret);
+      if (ret.msg != null) notify(ret.msg, ret.ret);
+    },
+    error: function(xhr) {
+      $('#epg_result').text('AJAX ERROR\n' + xhr.responseText);
+      notify('EPG 상태 확인 실패', 'danger');
+    },
+    complete: function() {
+      clearButtonLoading($btn);
+    }
+  });
+});
+
+$("body").on('click', '#epg_fetch_btn', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  setButtonLoading($btn, '불러오는중');
+  $('#epg_result').text('');
+
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/setting_save',
+    type: 'POST',
+    cache: false,
+    data: $('#setting').serialize(),
+    dataType: 'json',
+    success: function(saveRet) {
+      $.ajax({
+        url: '/' + package_name + '/ajax/' + ajax_sub + '/epg_fetch',
+        type: 'POST',
+        cache: false,
+        data: $('#setting').serialize(),
+        dataType: 'json',
+        success: function(ret) {
+          renderEpgStatus(ret);
+          if (ret.msg != null) notify(ret.msg, ret.ret);
+        },
+        error: function(xhr) {
+          $('#epg_result').text('AJAX ERROR\n' + xhr.responseText);
+          notify('EPG 원본 불러오기 실패', 'danger');
+        },
+        complete: function() {
+          clearButtonLoading($btn);
+        }
+      });
+    },
+    error: function() {
+      notify('EPG 설정 저장 요청 실패', 'danger');
       clearButtonLoading($btn);
     }
   });
@@ -617,5 +906,129 @@ $("body").on('click', '#add_db_match_channel_btn', function(e){
     }
   });
 });
+
+
+/* PLAY PROFILE PATCH START */
+
+function renderPlayLoginResult(ret) {
+  var lines = [];
+  if (ret && ret.summary) {
+    if (ret.summary.profile_count != null) {
+      lines.push('프로필 API 접근: 성공');
+      lines.push('사용 가능한 프로필 수: ' + ret.summary.profile_count);
+    } else if (ret.summary.profile_api_ok != null) {
+      lines.push('프로필 API 접근: ' + (ret.summary.profile_api_ok ? '성공' : '실패'));
+    }
+
+    if (ret.summary.playlist_ok != null) {
+      lines.push('재생목록 확인: ' + (ret.summary.playlist_ok ? '성공' : '실패'));
+    } else if (ret.summary.playlist_url) {
+      lines.push('재생 URL 확인: 성공');
+    }
+
+    if (ret.summary.playlist_line_count != null) {
+      lines.push('재생목록 라인 수: ' + ret.summary.playlist_line_count);
+    }
+  }
+  if (ret && ret.msg) lines.push(ret.msg);
+  if (lines.length === 0) lines.push('응답은 받았지만 표시할 결과가 없습니다.');
+  $('#play_login_result').text(lines.join('\n'));
+}
+
+function loadPlayProfilesAfterLogin($btn) {
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/load_play_profiles',
+    type: 'POST',
+    cache: false,
+    data: $('#setting').serialize(),
+    dataType: 'json',
+    success: function(ret) {
+      if (ret.msg != null) notify(ret.msg, ret.ret);
+      var profiles = (ret && ret.profiles) ? ret.profiles : [];
+      var current = $('#basic_tvh_stream_profile').val() || '';
+      var html = '<option value="">선택하세요</option>';
+      profiles.forEach(function(name){
+        var selected = (current === name) ? ' selected' : '';
+        html += '<option value="' + escapeHtml(name) + '"' + selected + '>' + escapeHtml(name) + '</option>';
+      });
+      $('#play_profile_select').html(html);
+      if (current) $('#play_profile_select').val(current);
+    },
+    error: function(xhr) {
+      $('#play_login_result').text('AJAX ERROR\n' + xhr.responseText);
+      notify('프로필 목록 불러오기 실패', 'danger');
+    },
+    complete: function() {
+      if ($btn && $btn.length) clearButtonLoading($btn);
+    }
+  });
+}
+
+$("body").on('click', '#manual_save_btn', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  setButtonLoading($btn, '저장중');
+
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/setting_save',
+    type: 'POST',
+    cache: false,
+    data: $('#setting').serialize(),
+    dataType: 'json',
+    success: function(ret) {
+      if (ret.msg != null) notify(ret.msg, ret.ret);
+    },
+    error: function() {
+      notify('재생 설정 저장 요청 실패', 'danger');
+    },
+    complete: function() {
+      clearButtonLoading($btn);
+    }
+  });
+});
+
+$("body").on('click', '#test_play_login_btn', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  setButtonLoading($btn, '확인중');
+  $('#play_login_result').text('재생 계정 로그인 확인 중...');
+
+  $.ajax({
+    url: '/' + package_name + '/ajax/' + ajax_sub + '/setting_save',
+    type: 'POST',
+    cache: false,
+    data: $('#setting').serialize(),
+    dataType: 'json',
+    success: function(saveRet) {
+      $.ajax({
+        url: '/' + package_name + '/ajax/' + ajax_sub + '/test_play_login',
+        type: 'POST',
+        cache: false,
+        data: $('#setting').serialize(),
+        dataType: 'json',
+        success: function(ret) {
+          if (ret.msg != null) notify(ret.msg, ret.ret);
+          renderPlayLoginResult(ret);
+          if (ret && ret.ret === 'success') {
+            loadPlayProfilesAfterLogin($btn);
+          } else {
+            clearButtonLoading($btn);
+          }
+        },
+        error: function(xhr) {
+          $('#play_login_result').text('AJAX ERROR\n' + xhr.responseText);
+          notify('재생 로그인 확인 요청 실패', 'danger');
+          clearButtonLoading($btn);
+        }
+      });
+    },
+    error: function() {
+      notify('재생 설정 저장 요청 실패', 'danger');
+      clearButtonLoading($btn);
+    }
+  });
+});
+
+/* PLAY PROFILE PATCH END */
 
 </script>

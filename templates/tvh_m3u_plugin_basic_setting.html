@@ -9,6 +9,12 @@
 
       {% if arg['page_sub'] == 'sync' %}
         {% include 'tvh_m3u_basic_sync.html' %}
+      {% elif arg['page_sub'] == 'epg' %}
+        {% include 'tvh_m3u_basic_epg.html' %}
+      {% elif arg['page_sub'] == 'logo' %}
+        {% include 'tvh_m3u_basic_logo.html' %}
+      {% elif arg['page_sub'] == 'addlogo' %}
+        {% include 'tvh_m3u_basic_logo_add.html' %}
       {% elif arg['page_sub'] == 'm3u' %}
         {% include 'tvh_m3u_basic_m3u.html' %}
       {% elif arg['page_sub'] == 'api' %}

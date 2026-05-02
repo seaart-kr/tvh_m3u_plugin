@@ -1,0 +1,99 @@
+<div class="card mb-4">
+  <div class="card-header"><strong>사업자 우선순위</strong></div>
+  <div class="card-body">
+    <div class="ff-mini-note">통합 EPG 또는 사업자별 크롤링 결과를 사용할 때, 사용자가 우선순위와 사용 여부를 버튼으로 정하는 영역입니다. EPG 내용이 한 개 업체만 들어 있어도 그대로 진행 가능하도록 막지 않습니다.</div>
+
+    <input type="hidden" id="basic_epg_provider_priority" name="basic_epg_provider_priority" value="{{ arg.get('basic_epg_provider_priority', '') }}">
+    <input type="hidden" id="basic_epg_provider_enabled" name="basic_epg_provider_enabled" value="{{ arg.get('basic_epg_provider_enabled', '') }}">
+
+    <div id="epg_provider_priority_list" class="ff-epg-provider-priority-list" style="margin-top:14px;">
+      {% for item in arg.get('epg_provider_rows', []) %}
+      <div class="ff-epg-provider-row" data-provider-key="{{ item.get('key') }}" data-enabled="{{ 'true' if item.get('enabled') else 'false' }}" style="display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid #e5e5e5; border-radius:8px; margin-bottom:8px; background:#fff;">
+        <div class="ff-epg-provider-rank" style="min-width:64px;"><span class="badge badge-secondary epg-rank-badge">{{ loop.index }}순위</span></div>
+        <div class="ff-epg-provider-label" style="min-width:90px; font-weight:600;">{{ item.get('label') }}</div>
+        <div class="ff-epg-provider-controls" style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button type="button" class="btn btn-sm epg-provider-toggle-btn {% if item.get('enabled') %}btn-primary{% else %}btn-outline-secondary{% endif %}">{{ 'On' if item.get('enabled') else 'Off' }}</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary epg-provider-up-btn">▲</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary epg-provider-down-btn">▼</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="ff-fixed-box" style="margin-top:12px;">
+      <div>현재 사용 On: <strong id="epg_provider_enabled_preview">{{ ' > '.join(arg.get('epg_provider_enabled_labels', [])) if arg.get('epg_provider_enabled_labels') else '-' }}</strong></div>
+      <div>현재 Off: <strong id="epg_provider_disabled_preview">{{ ', '.join(arg.get('epg_provider_disabled_labels', [])) if arg.get('epg_provider_disabled_labels') else '-' }}</strong></div>
+    </div>
+
+    <div class="ff-fixed-box" style="margin-top:12px;">
+      <div>감지된 EPG 형태: <strong id="epg_provider_mode">{% if arg.get('epg_provider_mode') == 'integrated' %}통합{% elif arg.get('epg_provider_mode') == 'single' %}단일{% else %}미확인{% endif %}</strong></div>
+      <div>감지된 사업자: <strong id="epg_detected_provider_preview">{% if arg.get('epg_detected_provider_rows') %}{% for row in arg.get('epg_detected_provider_rows', []) %}{% if not loop.first %}, {% endif %}{{ row.get('label') }}({{ row.get('count') }}){% endfor %}{% else %}-{% endif %}</strong></div>
+      <div class="text-muted" style="margin-top:4px;">단일 사업자 EPG여도 우선순위 설정은 그대로 저장되며, 이후 처리 단계에서 가능한 범위 안에서 그대로 사용합니다.</div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><strong>EPG 설정</strong></div>
+  <div class="card-body">
+    <div class="mb-3">{{ macros.m_button_group([['manual_save_btn_epg', '저장']]) }}</div>
+
+    {{ macros.setting_input_text('basic_epg_xml_url', 'myepg XML 주소', value=arg.get('basic_epg_xml_url', ''), desc=['예: https://.../epg.xml', 'gzip(.gz) 주소도 자동 해제 시도']) }}
+
+    <div class="ff-action-btn-row">
+      <button type="button" class="btn btn-primary" id="epg_fetch_btn">EPG 불러오기 / 동기화</button>
+      <button type="button" class="btn btn-outline-secondary" id="epg_status_btn">상태 확인</button>
+      {% if arg.get('epg_cache_exists') %}
+      <a class="btn btn-outline-success" href="{{ arg.get('epg_raw_url', '#') }}" target="_blank">캐시된 Raw XML 보기</a>
+      {% endif %}
+    </div>
+
+    <div class="ff-mini-note ff-center-note" style="margin-top:10px;">기존 채널 동기화 / remote 매칭 / 재생 프로필 로직은 건드리지 않고, myepg 원본 fetch/cache만 먼저 추가하는 1차 구성입니다.</div>
+
+    <div id="epg_result" class="ff-result-box" style="white-space:pre-line; margin-top:12px;"></div>
+
+    <div class="ff-fixed-box" style="margin-top:12px;">
+      <div>마지막 불러오기 시각: <strong id="epg_last_fetch_time">{{ arg.get('basic_epg_last_fetch_time', '-') or '-' }}</strong></div>
+      <div>채널 수: <strong id="epg_channel_count">{{ arg.get('basic_epg_channel_count', 0) or 0 }}</strong></div>
+      <div>편성 수: <strong id="epg_programme_count">{{ arg.get('basic_epg_programme_count', 0) or 0 }}</strong></div>
+      <div>로고 수: <strong id="epg_icon_count">{{ arg.get('basic_epg_icon_count', 0) or 0 }}</strong></div>
+      <div>캐시 파일 크기(bytes): <strong id="epg_file_size">{{ arg.get('basic_epg_file_size', 0) or 0 }}</strong></div>
+      <div>캐시 상태: <strong id="epg_cache_state">{{ '있음' if arg.get('epg_cache_exists') else '없음' }}</strong></div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><strong>전체 채널 미리보기</strong></div>
+  <div class="card-body">
+    <div class="ff-mini-note">채널별 EPG id 연결 구조 설계 전에, 원본 XML에서 읽힌 전체 channel id / 대표명 / 사업자 / 로고 존재 여부를 확인하는 영역입니다.</div>
+    <div class="table-responsive mt-3">
+      <table class="table table-sm table-bordered">
+        <thead>
+          <tr>
+            <th>EPG Channel ID</th>
+            <th>대표 채널명</th>
+            <th>사업자</th>
+            <th>display-name 샘플</th>
+            <th>아이콘</th>
+          </tr>
+        </thead>
+        <tbody id="epg_sample_tbody">
+          {% if arg.get('epg_sample_channels') %}
+            {% for item in arg.get('epg_sample_channels', []) %}
+            <tr>
+              <td><code>{{ item.get('id', '') }}</code></td>
+              <td>{{ item.get('name', '') }}</td>
+              <td>{{ item.get('provider_label', '') or '-' }}</td>
+              <td><div style="white-space:normal; word-break:break-word;">{{ ' / '.join(item.get('display_names', [])) }}</div></td>
+              <td>{% if item.get('icon_url') %}<a href="{{ item.get('icon_url') }}" target="_blank">있음</a>{% else %}-{% endif %}</td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="5" class="text-muted">아직 불러온 EPG 캐시가 없습니다.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

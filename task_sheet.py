@@ -22,13 +22,19 @@ class TaskSheet(TaskBase):
         if isinstance(info, dict) and info.get('db_path'):
             return info
 
+        try:
+            from .task_remote_backend import TaskRemoteBackend
+            remote_uri = TaskRemoteBackend.describe_remote()
+        except Exception:
+            remote_uri = 'https://ff.aha3011.mywire.org/ff_tvh_sheet_write/api/basic'
+
         return {
-            'requested_mode': 'local',
-            'effective_mode': 'local',
-            'db_path': '/data/db/ff_tvh_sheet_write.db',
-            'label': '내부 기준 DB',
+            'requested_mode': 'remote',
+            'effective_mode': 'remote',
+            'db_path': remote_uri,
+            'label': '공용 원격 기준 규칙',
             'fallback_used': False,
-            'reason': 'task_sheet_default_local',
+            'reason': 'task_sheet_default_remote',
         }
 
     @staticmethod
@@ -36,7 +42,7 @@ class TaskSheet(TaskBase):
         info = getattr(TaskSheet, '_ff_current_source_info', None)
         if isinstance(info, dict) and info.get('db_path'):
             return info.get('db_path')
-        return '/data/db/ff_tvh_sheet_write.db'
+        return TaskSheet._get_runtime_source_info().get('db_path')
 
     @staticmethod
     def _now():
@@ -69,6 +75,14 @@ class TaskSheet(TaskBase):
             seen.add(key)
             results.append(item)
         return results
+
+    @staticmethod
+    def _is_unused_category(*values):
+        for value in values:
+            text = str(value or '').strip()
+            if text and '미사용' in text:
+                return True
+        return False
 
     @staticmethod
     def get_match_source_info():
@@ -126,9 +140,9 @@ class TaskSheet(TaskBase):
             return custom_logo_by_master_id, custom_logo_by_name
 
         cols = TaskSheet._get_columns(conn, 'custom_logo')
-        fk_col = TaskSheet._pick_column(cols, ['channel_master_id', 'master_id', 'cm_id'])
-        name_col = TaskSheet._pick_column(cols, ['standard_name', 'channel_name', 'name', 'title'])
-        logo_col = TaskSheet._pick_column(cols, ['logo_url', 'custom_logo_url', 'url', 'path', 'logo'])
+        fk_col = TaskSheet._pick_column(cols, ['channel_master_id', 'master_id', 'cm_id', 'matched_channel_id'])
+        name_col = TaskSheet._pick_column(cols, ['standard_name', 'channel_name', 'name', 'title', 'source_channel_name'])
+        logo_col = TaskSheet._pick_column(cols, ['logo_url', 'custom_logo_url', 'url', 'path', 'logo', 'logo_url_template'])
 
         select_cols = [
             f"{fk_col} AS channel_master_id" if fk_col else "NULL AS channel_master_id",
@@ -142,8 +156,9 @@ class TaskSheet(TaskBase):
             if not logo_url:
                 continue
 
-            if row['channel_master_id'] is not None:
-                custom_logo_by_master_id[row['channel_master_id']] = logo_url
+            channel_master_id = str(row['channel_master_id'] or '').strip()
+            if channel_master_id:
+                custom_logo_by_master_id[channel_master_id] = logo_url
 
             std_name = str(row['standard_name'] or '').strip().lower()
             if std_name:
@@ -165,6 +180,9 @@ class TaskSheet(TaskBase):
         master_group_col = TaskSheet._pick_column(master_cols, [
             'group_category', 'group_name', 'category', 'group', 'group_nm', 'category_name'
         ])
+        master_receive_col = TaskSheet._pick_column(master_cols, [
+            'receive_category', 'receive_group', 'recv_category', 'receive'
+        ])
         master_provider_logo_col = TaskSheet._pick_column(master_cols, [
             'provider_logo_url', 'provider_logo', 'logo_url', 'logo', 'logo_path'
         ])
@@ -180,6 +198,7 @@ class TaskSheet(TaskBase):
             f"{master_id_col} AS channel_master_id",
             f"{master_name_col} AS standard_name",
             f"{master_group_col} AS group_name" if master_group_col else "'' AS group_name",
+            f"{master_receive_col} AS receive_category" if master_receive_col else "'' AS receive_category",
             f"{master_provider_logo_col} AS provider_logo_url" if master_provider_logo_col else "'' AS provider_logo_url",
             f"{master_aka_col} AS aka_names" if master_aka_col else "'' AS aka_names",
         ]
@@ -201,6 +220,9 @@ class TaskSheet(TaskBase):
 
             channel_master_id = row['channel_master_id']
             group_name = str(row['group_name'] or '').strip()
+            receive_category = str(row['receive_category'] or '').strip()
+            if TaskSheet._is_unused_category(receive_category, group_name):
+                continue
             provider_logo_url = str(row['provider_logo_url'] or '').strip()
             custom_logo_url = custom_logo_by_master_id.get(channel_master_id, '') or custom_logo_by_name.get(standard_name.lower(), '')
             final_logo_url = custom_logo_url or provider_logo_url
@@ -353,6 +375,7 @@ class TaskSheet(TaskBase):
                 updates.append({
                     'channel_uuid': row.channel_uuid,
                     'sheet_group_name': '' if manual_group_name else matched_group_name,
+                    'sheet_channel_id': str(info.get('channel_master_id') or '').strip(),
                     'sheet_logo_url': final_logo_url,
                     'sheet_logo_wave1': provider_logo_url,
                     'sheet_logo_wave2': provider_logo_url,
@@ -464,36 +487,32 @@ except Exception:
 try:
     from .task_remote_backend import TaskRemoteBackend
 
-    _orig_load_db_rules_v2 = getattr(TaskSheet, 'load_db_rules', None)
+    def _load_db_rules_remote_only_v2():
+        _rules = TaskRemoteBackend.fetch_match_rules()
+        if isinstance(_rules, dict) and any(k in _rules for k in ['master_exact', 'alias_exact', 'master_norm', 'alias_norm']):
+            try:
+                globals()['WRITE_DB_PATH'] = TaskRemoteBackend.describe_remote()
+            except Exception:
+                pass
 
-    if _orig_load_db_rules_v2:
-        def _load_db_rules_remote_first_v2():
-            if TaskRemoteBackend.is_remote_enabled():
-                _rules = TaskRemoteBackend.fetch_match_rules()
-                if isinstance(_rules, dict) and any(k in _rules for k in ['master_exact', 'alias_exact', 'master_norm', 'alias_norm']):
-                    try:
-                        globals()['WRITE_DB_PATH'] = TaskRemoteBackend.describe_remote()
-                    except Exception:
-                        pass
+            if 'group_names' not in _rules:
+                _groups = set()
+                for _bucket in ['master_exact', 'alias_exact', 'master_norm', 'alias_norm']:
+                    _data = _rules.get(_bucket) or {}
+                    if isinstance(_data, dict):
+                        for _item in _data.values():
+                            if not isinstance(_item, dict):
+                                continue
+                            _g = str(_item.get('group_name') or _item.get('group_category') or '').strip()
+                            if _g:
+                                _groups.add(_g)
+                _rules['group_names'] = sorted(_groups)
 
-                    if 'group_names' not in _rules:
-                        _groups = set()
-                        for _bucket in ['master_exact', 'alias_exact', 'master_norm', 'alias_norm']:
-                            _data = _rules.get(_bucket) or {}
-                            if isinstance(_data, dict):
-                                for _item in _data.values():
-                                    if not isinstance(_item, dict):
-                                        continue
-                                    _g = str(_item.get('group_name') or _item.get('group_category') or '').strip()
-                                    if _g:
-                                        _groups.add(_g)
-                        _rules['group_names'] = sorted(_groups)
+            return _rules
 
-                    return _rules
+        raise RuntimeError(f'공용 원격 기준 규칙을 불러오지 못했습니다: {TaskRemoteBackend.describe_remote()}')
 
-            return _orig_load_db_rules_v2()
-
-        TaskSheet.load_db_rules = staticmethod(_load_db_rules_remote_first_v2)
+    TaskSheet.load_db_rules = staticmethod(_load_db_rules_remote_only_v2)
 except Exception:
     pass
 # === REMOTE MATCH RULES API PATCH V2 END ===

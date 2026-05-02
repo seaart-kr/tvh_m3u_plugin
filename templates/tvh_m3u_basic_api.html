@@ -1,7 +1,8 @@
 <div class="card mb-4">
   <div class="card-header"><strong>API 안내</strong></div>
   <div class="card-body">
-    <div class="ff-api-note">아래 링크를 복사해서 TVH 테스트용 또는 TiviMate용으로 사용할 수 있습니다. 기본 링크는 TiviMate용과 동일하게 동작합니다.</div>
+    <div class="ff-api-note">아래 링크를 복사해서 TVH 테스트용 또는 TiviMate용으로 사용할 수 있습니다.</div>
+    <div class="mt-2" style="color:#666;">현재 로고 우선순위: <strong>{{ arg.get('logo_priority_text', 'custom,kt,wavve,tving,sk') }}</strong></div>
   </div>
 </div>
 
@@ -28,13 +29,39 @@
       </div>
     </div>
 
-    <div class="form-group row" style="margin-bottom:0;">
-      <label class="col-sm-3 col-form-label">기본 링크</label>
+  </div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header"><strong>EPG API 링크</strong></div>
+  <div class="card-body">
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">TVH용 EPG</label>
       <div class="col-sm-9">
         <div class="input-group">
-          <a href="{{ arg['m3u_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_url'] }}</a>
+          <a href="{{ arg['epg_tvh_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['epg_tvh_url'] }}</a>
         </div>
-        <small class="form-text text-muted">기본 링크 = TiviMate용 링크</small>
+        <small class="form-text text-muted">내부 로고 주소로 재가공한 TVHeadend용 EPG XML</small>
+      </div>
+    </div>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">TiviMate용 EPG</label>
+      <div class="col-sm-9">
+        <div class="input-group">
+          <a href="{{ arg['epg_tivimate_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['epg_tivimate_url'] }}</a>
+        </div>
+        <small class="form-text text-muted">내부 로고 주소로 재가공한 TiviMate용 EPG XML</small>
+      </div>
+    </div>
+
+    <div class="form-group row" style="margin-bottom:0;">
+      <label class="col-sm-3 col-form-label">Raw EPG</label>
+      <div class="col-sm-9">
+        <div class="input-group">
+          <a href="{{ arg['epg_raw_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['epg_raw_url'] }}</a>
+        </div>
+        <small class="form-text text-muted">원본 myepg 캐시 확인용 링크</small>
       </div>
     </div>
   </div>

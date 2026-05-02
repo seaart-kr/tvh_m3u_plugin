@@ -192,29 +192,8 @@
     {% endif %}
   
 
-<hr>
-<div class="mt-3 mb-2"><strong>Remote 테스트 설정</strong></div>
 
-<div class="form-group">
-  <label for="basic_match_source_mode">매칭 소스 모드</label>
-  <select id="basic_match_source_mode" name="basic_match_source_mode" class="form-control form-control-sm">
-    <option value="auto" {% if arg.get('basic_match_source_mode', 'auto') == 'auto' %}selected{% endif %}>auto</option>
-    <option value="local" {% if arg.get('basic_match_source_mode', 'auto') == 'local' %}selected{% endif %}>local</option>
-    <option value="remote" {% if arg.get('basic_match_source_mode', 'auto') == 'remote' %}selected{% endif %}>remote</option>
-  </select>
-  <small class="form-text text-muted">auto / local / remote 중 선택</small>
-</div>
-
-<div class="form-group">
-  <label for="basic_match_source_remote">Remote 기준 DB</label>
-  <input type="text" class="form-control form-control-sm" id="basic_match_source_remote" name="basic_match_source_remote" value="{{ arg.get('basic_match_source_remote', '') }}">
-  <small class="form-text text-muted">예: /data/db/ff_tvh_sheet_write.db, file:///data/db/ff_tvh_sheet_write.db, remote:/data/db/ff_tvh_sheet_write.db, https://...</small>
-</div>
-
-{% set ms = arg.get('match_source_info', {}) %}
-<div class="mb-3 text-muted">
-  현재 해석: 요청={{ ms.get('requested_mode', 'auto') }} / 적용={{ ms.get('effective_mode', 'local') }} / fallback={{ ms.get('fallback_used', False) }} / reason={{ ms.get('reason', '') }}
-</div>
+  <div class="ff-mini-note text-muted" style="margin-top:16px;">매칭 소스 동작 상세는 내부 기준으로 처리되며, 사용자 화면에서는 핵심 동기화/매칭 결과만 표시합니다.</div>
 
 </div>
 </div>

@@ -18,6 +18,9 @@ setting = {
                 'name': '기본',
                 'list': [
                     {'uri': 'sync', 'name': '채널 동기화'},
+                    {'uri': 'epg', 'name': 'EPG 설정'},
+                    {'uri': 'logo', 'name': '로고 설정'},
+                    {'uri': 'addlogo', 'name': '커스텀 로고 추가'},
                     {'uri': 'm3u', 'name': '재생 프로필 설정'},
                     {'uri': 'api', 'name': 'API'},
                 ]
