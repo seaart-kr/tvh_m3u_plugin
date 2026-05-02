@@ -1,7 +1,7 @@
 <div class="card mb-4">
-  <div class="card-header"><strong>사업자 우선순위</strong></div>
+  <div class="card-header"><strong>EPG 우선순위</strong></div>
   <div class="card-body">
-    <div class="ff-mini-note">통합 EPG 또는 사업자별 크롤링 결과를 사용할 때, 사용자가 우선순위와 사용 여부를 버튼으로 정하는 영역입니다. EPG 내용이 한 개 업체만 들어 있어도 그대로 진행 가능하도록 막지 않습니다.</div>
+    <div class="ff-mini-note">통합 EPG 또는 EPG별 크롤링 결과를 사용할 때, 사용자가 우선순위와 사용 여부를 버튼으로 정하는 영역입니다. EPG 내용이 한 개 업체만 들어 있어도 그대로 진행 가능하도록 막지 않습니다.</div>
 
     <input type="hidden" id="basic_epg_provider_priority" name="basic_epg_provider_priority" value="{{ arg.get('basic_epg_provider_priority', '') }}">
     <input type="hidden" id="basic_epg_provider_enabled" name="basic_epg_provider_enabled" value="{{ arg.get('basic_epg_provider_enabled', '') }}">
@@ -27,8 +27,8 @@
 
     <div class="ff-fixed-box" style="margin-top:12px;">
       <div>감지된 EPG 형태: <strong id="epg_provider_mode">{% if arg.get('epg_provider_mode') == 'integrated' %}통합{% elif arg.get('epg_provider_mode') == 'single' %}단일{% else %}미확인{% endif %}</strong></div>
-      <div>감지된 사업자: <strong id="epg_detected_provider_preview">{% if arg.get('epg_detected_provider_rows') %}{% for row in arg.get('epg_detected_provider_rows', []) %}{% if not loop.first %}, {% endif %}{{ row.get('label') }}({{ row.get('count') }}){% endfor %}{% else %}-{% endif %}</strong></div>
-      <div class="text-muted" style="margin-top:4px;">단일 사업자 EPG여도 우선순위 설정은 그대로 저장되며, 이후 처리 단계에서 가능한 범위 안에서 그대로 사용합니다.</div>
+      <div>감지된 EPG: <strong id="epg_detected_provider_preview">{% if arg.get('epg_detected_provider_rows') %}{% for row in arg.get('epg_detected_provider_rows', []) %}{% if not loop.first %}, {% endif %}{{ row.get('label') }}({{ row.get('count') }}){% endfor %}{% else %}-{% endif %}</strong></div>
+      <div class="text-muted" style="margin-top:4px;">단일 EPG여도 우선순위 설정은 그대로 저장되며, 이후 처리 단계에서 가능한 범위 안에서 그대로 사용합니다.</div>
     </div>
   </div>
 </div>
@@ -89,14 +89,14 @@
 <div class="card mb-4">
   <div class="card-header"><strong>전체 채널 미리보기</strong></div>
   <div class="card-body">
-    <div class="ff-mini-note">채널별 EPG id 연결 구조 설계 전에, 원본 XML에서 읽힌 전체 channel id / 대표명 / 사업자 / 로고 존재 여부를 확인하는 영역입니다.</div>
+    <div class="ff-mini-note">채널별 EPG id 연결 구조 설계 전에, 원본 XML에서 읽힌 전체 channel id / 대표명 / EPG / 로고 존재 여부를 확인하는 영역입니다.</div>
     <div class="table-responsive mt-3">
       <table class="table table-sm table-bordered">
         <thead>
           <tr>
             <th>EPG Channel ID</th>
             <th>대표 채널명</th>
-            <th>사업자</th>
+            <th>EPG</th>
             <th>display-name 샘플</th>
             <th>아이콘</th>
           </tr>

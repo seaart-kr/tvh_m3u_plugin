@@ -1096,7 +1096,7 @@ class ModuleBasic(PluginModuleBase):
                         provider_msg = ' / 통합 EPG 감지: ' + ', '.join([f"{row.get('label')}({row.get('count')})" for row in provider_rows])
                     elif meta.get('provider_mode') == 'single' and provider_rows:
                         row = provider_rows[0]
-                        provider_msg = f" / 단일 사업자 EPG 감지: {row.get('label')}({row.get('count')}) - 우선순위 설정과 무관하게 계속 진행 가능"
+                        provider_msg = f" / 단일 EPG 감지: {row.get('label')}({row.get('count')}) - 우선순위 설정과 무관하게 계속 진행 가능"
                     else:
                         provider_msg = ''
                     return jsonify({
