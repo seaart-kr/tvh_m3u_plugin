@@ -2,6 +2,9 @@
 import importlib
 import sys
 import os
+import threading
+import time
+import datetime as _epg_auto_dt
 import json
 import gzip
 import shutil
@@ -511,6 +514,89 @@ def _get_epg_status_payload():
     return payload
 
 
+
+_EPG_AUTO_THREAD_STARTED = False
+_EPG_AUTO_LOCK = threading.Lock()
+
+
+def _normalize_epg_auto_time(value):
+    text = str(value or '').strip()
+    try:
+        hour, minute = text.split(':', 1)
+        hour = int(hour)
+        minute = int(minute)
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f'{hour:02d}:{minute:02d}'
+    except Exception:
+        pass
+    return '03:30'
+
+
+def _is_epg_auto_enabled():
+    value = str(P.ModelSetting.get('basic_epg_auto_enabled') or 'False').strip().lower()
+    return value in ['true', 'on', '1', 'yes', 'y']
+
+
+def _run_epg_fetch_from_settings(trigger='manual'):
+    epg_url = (P.ModelSetting.get('basic_epg_xml_url') or '').strip()
+    if not epg_url:
+        raise Exception('myepg XML 주소가 비어 있습니다.')
+
+    verify_ssl = str(P.ModelSetting.get('basic_tvh_use_verify_ssl') or 'False').strip().lower() in ['true', 'on', '1', 'yes', 'y']
+    meta = _fetch_epg_and_build_meta(epg_url, verify_ssl=verify_ssl)
+
+    P.ModelSetting.set('basic_epg_last_fetch_time', meta.get('fetched_at', ''))
+    P.ModelSetting.set('basic_epg_channel_count', str(meta.get('channel_count', 0)))
+    P.ModelSetting.set('basic_epg_programme_count', str(meta.get('programme_count', 0)))
+    P.ModelSetting.set('basic_epg_icon_count', str(meta.get('icon_count', 0)))
+    P.ModelSetting.set('basic_epg_file_size', str(meta.get('file_size', 0)))
+
+    if trigger == 'auto':
+        P.ModelSetting.set(
+            'basic_epg_auto_last_result',
+            f"{meta.get('fetched_at', '')} 성공 / 채널 {meta.get('channel_count', 0)} / 편성 {meta.get('programme_count', 0)}"
+        )
+
+    return meta
+
+
+def _epg_auto_scheduler_loop():
+    while True:
+        try:
+            if _is_epg_auto_enabled():
+                target_time = _normalize_epg_auto_time(P.ModelSetting.get('basic_epg_auto_time') or '03:30')
+                now = _epg_auto_dt.datetime.now()
+                today = now.strftime('%Y-%m-%d')
+                now_hm = now.strftime('%H:%M')
+                last_run_date = str(P.ModelSetting.get('basic_epg_auto_last_run_date') or '').strip()
+
+                if now_hm >= target_time and last_run_date != today:
+                    try:
+                        _run_epg_fetch_from_settings(trigger='auto')
+                        P.ModelSetting.set('basic_epg_auto_last_run_date', today)
+                    except Exception as e:
+                        P.ModelSetting.set('basic_epg_auto_last_result', f"{now.strftime('%Y-%m-%d %H:%M:%S')} 실패 / {str(e)}")
+                        logger.exception(f'[ff_tvh_m3u] epg auto refresh failed: {str(e)}')
+        except Exception as e:
+            logger.exception(f'[ff_tvh_m3u] epg auto scheduler loop failed: {str(e)}')
+
+        time.sleep(30)
+
+
+def _ensure_epg_auto_scheduler_started():
+    global _EPG_AUTO_THREAD_STARTED
+    if _EPG_AUTO_THREAD_STARTED:
+        return
+
+    with _EPG_AUTO_LOCK:
+        if _EPG_AUTO_THREAD_STARTED:
+            return
+
+        thread = threading.Thread(target=_epg_auto_scheduler_loop, name='ff_tvh_m3u_epg_auto', daemon=True)
+        thread.start()
+        _EPG_AUTO_THREAD_STARTED = True
+        logger.info('[ff_tvh_m3u] epg auto scheduler started')
+
 class ModuleBasic(PluginModuleBase):
     db_default = {
         'basic_tvh_api_base': '',
@@ -538,11 +624,19 @@ class ModuleBasic(PluginModuleBase):
         'basic_epg_file_size': '0',
         'basic_epg_provider_priority': 'kt,lgu,sk,daum,naver,wavve,tving,spotv',
         'basic_epg_provider_enabled': 'kt,lgu,sk,daum,naver,wavve,tving,spotv',
+        'basic_epg_auto_enabled': 'False',
+        'basic_epg_auto_time': '03:30',
+        'basic_epg_auto_last_run_date': '',
+        'basic_epg_auto_last_result': '',
         'basic_logo_priority': 'custom,kt,wavve,tving,sk',
     }
 
     def __init__(self, P):
         super(ModuleBasic, self).__init__(P, name='basic', first_menu='sync')
+        try:
+            _ensure_epg_auto_scheduler_started()
+        except Exception as e:
+            logger.exception(f'[ff_tvh_m3u] epg auto scheduler start failed: {str(e)}')
 
     def process_menu(self, sub, req):
         try:
