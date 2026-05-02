@@ -1063,13 +1063,13 @@ class ModuleBasic(PluginModuleBase):
             elif sub == 'logo_preview_select':
                 return jsonify({
                     'ret': 'warning',
-                    'msg': '로고 선택 저장은 관리자 FF의 ff_tvh_sheet_write 플러그인에서 처리하세요.',
+                    'msg': '로고 선택 저장 기능은 아직 지원하지 않습니다.',
                 })
 
             elif sub == 'logo_preview_clear':
                 return jsonify({
                     'ret': 'warning',
-                    'msg': '로고 선택 초기화는 관리자 FF의 ff_tvh_sheet_write 플러그인에서 처리하세요.',
+                    'msg': '로고 선택 초기화 기능은 아직 지원하지 않습니다.',
                 })
 
             elif sub == 'upload_custom_logo':
