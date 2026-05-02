@@ -95,11 +95,41 @@ def _resolve_matched_channel_id(channel_name=''):
     return ''
 
 
-def _mirror_token():
-    return (
-        str(P.ModelSetting.get('basic_custom_logo_mirror_token') or '').strip()
-        or str(os.environ.get('TVH_M3U_CUSTOM_LOGO_MIRROR_TOKEN') or '').strip()
-    )
+def _source_ff_apikey():
+    # FF/SJVA installations may keep the public apikey in different setting DBs.
+    candidates = []
+    try:
+        candidates.append(str(P.ModelSetting.get('apikey') or '').strip())
+    except Exception:
+        pass
+    candidates.append(str(os.environ.get('FF_APIKEY') or '').strip())
+    candidates.append(str(os.environ.get('SJVA_APIKEY') or '').strip())
+
+    for db_path, table_name in [
+        ('/data/db/system.db', 'system_setting'),
+        ('/data/db/sjva.db', 'sjva_setting'),
+        ('/data/db/flaskfarmaider.db', 'flaskfarmaider_setting'),
+    ]:
+        try:
+            if not os.path.exists(db_path):
+                continue
+            con = sqlite3.connect(db_path)
+            row = con.execute(f"SELECT value FROM {table_name} WHERE key='apikey' LIMIT 1").fetchone()
+            con.close()
+            if row and row[0]:
+                candidates.append(str(row[0]).strip())
+        except Exception:
+            pass
+
+    for value in candidates:
+        if value and len(value) >= 10:
+            return value
+    return ''
+
+
+def _is_valid_source_ff_apikey(value):
+    value = str(value or '').strip()
+    return len(value) == 10 and value.isalnum()
 
 
 def _mirror_url():
@@ -216,10 +246,7 @@ def _save_db(source_channel_name, standard_name='', aka_name='', stored_filename
     return {'matched_channel_id': matched_channel_id, 'standard_name': standard_name, 'logo_url_template': logo_url_template}
 
 
-def _mirror_to_owner(source_channel_name, standard_name, aka_name, file_path, stored_filename, sha1, file_size):
-    token = _mirror_token()
-    if not token:
-        return {'ret': 'skipped', 'msg': '원격 백업 토큰이 설정되지 않았습니다.'}
+def _mirror_to_owner(source_channel_name, standard_name, aka_name, file_path, stored_filename, sha1, file_size, source_apikey):
     try:
         with open(file_path, 'rb') as f:
             files = {'logo_file': (stored_filename, f)}
@@ -231,7 +258,7 @@ def _mirror_to_owner(source_channel_name, standard_name, aka_name, file_path, st
                 'sha1': sha1,
                 'file_size': str(file_size),
             }
-            headers = {'X-Custom-Logo-Token': token}
+            headers = {'X-Source-FF-Apikey': source_apikey}
             resp = requests.post(_mirror_url(), data=data, files=files, headers=headers, timeout=30)
             resp.raise_for_status()
             try:
@@ -250,9 +277,14 @@ def handle_custom_logo_upload(req):
     logo_file = req.files.get('logo_file')
     if not source_channel_name:
         return {'ret': 'warning', 'msg': '원본 채널명을 입력하세요.'}
+
+    source_apikey = _source_ff_apikey()
+    if not _is_valid_source_ff_apikey(source_apikey):
+        return {'ret': 'warning', 'msg': 'FF apikey 설정이 필요합니다. 시스템 설정에서 apikey를 설정한 뒤 다시 업로드하세요.'}
+
     saved = _save_file(logo_file, source_channel_name)
     db_info = _save_db(source_channel_name, standard_name, aka_name, saved['stored_filename'], saved['sha1'], saved['file_size'])
-    mirror = _mirror_to_owner(source_channel_name, db_info.get('standard_name') or standard_name or source_channel_name, aka_name, saved['output_path'], saved['stored_filename'], saved['sha1'], saved['file_size'])
+    mirror = _mirror_to_owner(source_channel_name, db_info.get('standard_name') or standard_name or source_channel_name, aka_name, saved['output_path'], saved['stored_filename'], saved['sha1'], saved['file_size'], source_apikey)
     msg = '커스텀 로고를 업로드했습니다.'
     if mirror.get('ret') in ['warning', 'danger']:
         msg += ' 단, 원격 백업은 실패했습니다.'
@@ -270,12 +302,9 @@ def handle_custom_logo_upload(req):
 
 
 def handle_custom_logo_mirror(req):
-    expected = _mirror_token()
-    received = str(req.headers.get('X-Custom-Logo-Token') or '').strip()
-    if not expected:
-        return {'ret': 'danger', 'msg': '원격 백업 토큰이 설정되지 않았습니다.'}
-    if received != expected:
-        return {'ret': 'danger', 'msg': '원격 백업 토큰이 올바르지 않습니다.'}
+    received = str(req.headers.get('X-Source-FF-Apikey') or '').strip()
+    if not _is_valid_source_ff_apikey(received):
+        return {'ret': 'danger', 'msg': 'FF apikey 확인이 필요합니다. apikey가 설정된 FF에서 다시 업로드하세요.'}
     source_channel_name = str(req.form.get('source_channel_name') or '').strip()
     standard_name = str(req.form.get('standard_name') or '').strip()
     aka_name = str(req.form.get('aka_name') or '').strip()
