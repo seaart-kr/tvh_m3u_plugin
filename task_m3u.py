@@ -927,6 +927,110 @@ class TaskM3U(TaskBase):
             except Exception:
                 pass
 
+
+    @staticmethod
+    def _load_remote_logo_cache(target_cache):
+        try:
+            from .task_remote_backend import TaskRemoteBackend
+            ret = TaskRemoteBackend._request('db_dump', {})
+            if not isinstance(ret, dict):
+                return target_cache
+            tables = ret.get('tables') if isinstance(ret.get('tables'), dict) else ret
+            if not isinstance(tables, dict):
+                return target_cache
+
+            master_rows = tables.get('channel_master') or []
+            alias_rows = tables.get('channel_alias') or []
+            provider_rows = tables.get('provider_logo_local') or []
+            custom_rows = tables.get('custom_logo') or []
+
+            id_to_names = {}
+            for row in master_rows if isinstance(master_rows, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                channel_id = str(row.get('id') or row.get('channel_id') or row.get('channel_master_id') or row.get('master_id') or '').strip()
+                names = [
+                    row.get('standard_name'),
+                    row.get('channel_name'),
+                    row.get('name'),
+                    row.get('title'),
+                ]
+                for name in names:
+                    name = str(name or '').strip()
+                    if channel_id and name:
+                        id_to_names.setdefault(channel_id, set()).add(name)
+
+            for row in alias_rows if isinstance(alias_rows, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                channel_id = str(row.get('channel_id') or row.get('matched_channel_id') or row.get('channel_master_id') or row.get('master_id') or '').strip()
+                alias_blob = row.get('alias_name') or row.get('aka_name') or row.get('aka') or row.get('alias') or row.get('name') or row.get('e_aka') or ''
+                for alias in re.split(r'[|\n\r]+', str(alias_blob or '')):
+                    alias = alias.strip()
+                    if channel_id and alias:
+                        id_to_names.setdefault(channel_id, set()).add(alias)
+
+            def register_row(row, default_provider):
+                if not isinstance(row, dict):
+                    return
+                provider = str(
+                    row.get('provider') or row.get('provider_name') or row.get('provider_type') or
+                    row.get('logo_type') or row.get('kind') or row.get('source_type') or default_provider or ''
+                ).strip()
+                if default_provider == 'custom':
+                    provider = 'custom'
+                provider = TaskM3U._canonical_logo_provider(provider)
+                if not provider:
+                    return
+
+                matched_channel_id = str(row.get('matched_channel_id') or row.get('channel_id') or row.get('master_id') or row.get('channel_master_id') or '').strip()
+                standard_name = str(row.get('standard_name') or row.get('channel_name') or row.get('name') or '').strip()
+                source_name = str(row.get('source_channel_name') or row.get('provider_channel_name') or row.get('original_name') or row.get('source_name') or '').strip()
+                logo_url = str(row.get('logo_url_template') or row.get('logo_url') or row.get('preview_url') or row.get('local_url') or row.get('stored_path') or row.get('path') or row.get('url') or '').strip()
+                stored_filename = str(row.get('stored_filename') or row.get('filename') or row.get('logo_file') or row.get('file_name') or '').strip()
+                original_url = str(row.get('original_logo_url') or row.get('origin_logo_url') or '').strip()
+                logo_template = TaskM3U._coalesce_logo_template(logo_url, stored_filename)
+                if not logo_template and not original_url:
+                    return
+
+                for name_value in [source_name, standard_name]:
+                    if name_value:
+                        TaskM3U._register_logo_cache_entry(
+                            target_cache,
+                            provider,
+                            name_value=name_value,
+                            matched_channel_id=matched_channel_id,
+                            url_value=logo_template,
+                            original_url=original_url,
+                        )
+
+                if matched_channel_id:
+                    TaskM3U._register_logo_cache_entry(
+                        target_cache,
+                        provider,
+                        name_value='',
+                        matched_channel_id=matched_channel_id,
+                        url_value=logo_template,
+                        original_url=original_url,
+                    )
+                    for alias_name in id_to_names.get(matched_channel_id, set()):
+                        TaskM3U._register_logo_cache_entry(
+                            target_cache,
+                            provider,
+                            name_value=alias_name,
+                            matched_channel_id='',
+                            url_value=logo_template,
+                            original_url=original_url,
+                        )
+
+            for row in custom_rows if isinstance(custom_rows, list) else []:
+                register_row(row, 'custom')
+            for row in provider_rows if isinstance(provider_rows, list) else []:
+                register_row(row, '')
+        except Exception as e:
+            logger.warning(f'[ff_tvh_m3u] load remote logo cache failed: {str(e)}')
+        return target_cache
+
     @staticmethod
 
     def _load_logo_cache(force=False):
@@ -944,6 +1048,7 @@ class TaskM3U(TaskBase):
         }
 
         if not os.path.exists(TaskM3U.WRITE_DB_PATH):
+            TaskM3U._load_remote_logo_cache(new_cache)
             TaskM3U._logo_cache = new_cache
             return new_cache
 
@@ -1158,7 +1263,15 @@ class TaskM3U(TaskBase):
             return ''
         suffix = text.split(TaskM3U.FF_URL_PLACEHOLDER, 1)[-1].strip()
         if suffix.startswith('/customlogo/'):
-            filename = os.path.basename(suffix)
+            rel = suffix[len('/customlogo/'):].lstrip('/')
+            if rel:
+                asset_candidate = os.path.join('/data/plugins/tvh_m3u_plugin/docs/assets', *rel.split('/'))
+                if os.path.exists(asset_candidate):
+                    return asset_candidate
+                flat_asset_candidate = os.path.join('/data/plugins/tvh_m3u_plugin/docs/assets', os.path.basename(rel))
+                if os.path.exists(flat_asset_candidate):
+                    return flat_asset_candidate
+            filename = os.path.basename(rel)
             for base_dir in ['/data/custom/customlogo', '/data/data/customlogo', '/data/custom/logo', '/data/custom/tvhlogo']:
                 candidate = os.path.join(base_dir, filename)
                 if os.path.exists(candidate):
