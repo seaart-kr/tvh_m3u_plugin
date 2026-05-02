@@ -18,6 +18,7 @@ from flask import request, render_template, jsonify, redirect, Response, render_
 from .setup import *
 from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, ModelChannelProfile, ModelLogoOverride, DB_PATH
 from .task import Task
+from .task_custom_logo import handle_custom_logo_upload, handle_custom_logo_mirror
 
 
 def _is_sync_form(req):
@@ -1073,7 +1074,7 @@ class ModuleBasic(PluginModuleBase):
                 })
 
             elif sub == 'upload_custom_logo':
-                return jsonify(_handle_custom_logo_upload(req))
+                return jsonify(handle_custom_logo_upload(req))
 
             elif sub == 'epg_status':
                 return jsonify(_get_epg_status_payload())
@@ -1216,7 +1217,7 @@ class ModuleBasic(PluginModuleBase):
                 )
 
             elif sub == 'custom_logo_mirror':
-                return jsonify(_handle_custom_logo_mirror(req))
+                return jsonify(handle_custom_logo_mirror(req))
 
             elif sub == 'epg_raw':
                 xml_path = _epg_cache_xml_path()
