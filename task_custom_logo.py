@@ -162,11 +162,18 @@ def _asset_dir():
     return path
 
 
-def _save_file(file_storage, source_channel_name, requested_filename=''):
+def _save_file(file_storage, source_channel_name, requested_filename='', preserve_requested=False):
     if file_storage is None:
         raise Exception('업로드할 로고 파일이 없습니다.')
     original_filename = requested_filename or getattr(file_storage, 'filename', '') or ''
-    stored_filename = _make_filename(source_channel_name, original_filename)
+
+    if preserve_requested and requested_filename:
+        stored_filename = os.path.basename(str(requested_filename or '').strip())
+        if not stored_filename:
+            raise Exception('저장할 로고 파일명이 비어 있습니다.')
+    else:
+        stored_filename = _make_filename(source_channel_name, original_filename)
+
     ext = os.path.splitext(stored_filename)[1].lower()
     if ext not in CUSTOM_LOGO_ALLOWED_EXTS:
         raise Exception('지원하지 않는 이미지 확장자입니다.')
@@ -312,7 +319,7 @@ def handle_custom_logo_mirror(req):
     requested_filename = str(req.form.get('stored_filename') or '').strip()
     if not source_channel_name:
         return {'ret': 'warning', 'msg': '원본 채널명이 비어 있습니다.'}
-    saved = _save_file(logo_file, source_channel_name, requested_filename=requested_filename)
+    saved = _save_file(logo_file, source_channel_name, requested_filename=requested_filename, preserve_requested=True)
     db_info = _save_db(source_channel_name, standard_name, aka_name, saved['stored_filename'], saved['sha1'], saved['file_size'])
     return {
         'ret': 'success',
