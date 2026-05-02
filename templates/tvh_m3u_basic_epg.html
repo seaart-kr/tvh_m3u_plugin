@@ -1,7 +1,7 @@
 <div class="card mb-4">
-  <div class="card-header"><strong>사업자 우선순위</strong></div>
+  <div class="card-header"><strong>EPG 우선순위</strong></div>
   <div class="card-body">
-    <div class="ff-mini-note">통합 EPG 또는 사업자별 크롤링 결과를 사용할 때, 사용자가 우선순위와 사용 여부를 버튼으로 정하는 영역입니다. EPG 내용이 한 개 업체만 들어 있어도 그대로 진행 가능하도록 막지 않습니다.</div>
+    <div class="ff-mini-note">통합 EPG 또는 EPG별 크롤링 결과를 사용할 때, 사용자가 우선순위와 사용 여부를 버튼으로 정하는 영역입니다. EPG 내용이 한 개 업체만 들어 있어도 그대로 진행 가능하도록 막지 않습니다.</div>
 
     <input type="hidden" id="basic_epg_provider_priority" name="basic_epg_provider_priority" value="{{ arg.get('basic_epg_provider_priority', '') }}">
     <input type="hidden" id="basic_epg_provider_enabled" name="basic_epg_provider_enabled" value="{{ arg.get('basic_epg_provider_enabled', '') }}">
@@ -27,8 +27,8 @@
 
     <div class="ff-fixed-box" style="margin-top:12px;">
       <div>감지된 EPG 형태: <strong id="epg_provider_mode">{% if arg.get('epg_provider_mode') == 'integrated' %}통합{% elif arg.get('epg_provider_mode') == 'single' %}단일{% else %}미확인{% endif %}</strong></div>
-      <div>감지된 사업자: <strong id="epg_detected_provider_preview">{% if arg.get('epg_detected_provider_rows') %}{% for row in arg.get('epg_detected_provider_rows', []) %}{% if not loop.first %}, {% endif %}{{ row.get('label') }}({{ row.get('count') }}){% endfor %}{% else %}-{% endif %}</strong></div>
-      <div class="text-muted" style="margin-top:4px;">단일 사업자 EPG여도 우선순위 설정은 그대로 저장되며, 이후 처리 단계에서 가능한 범위 안에서 그대로 사용합니다.</div>
+      <div>감지된 EPG: <strong id="epg_detected_provider_preview">{% if arg.get('epg_detected_provider_rows') %}{% for row in arg.get('epg_detected_provider_rows', []) %}{% if not loop.first %}, {% endif %}{{ row.get('label') }}({{ row.get('count') }}){% endfor %}{% else %}-{% endif %}</strong></div>
+      <div class="text-muted" style="margin-top:4px;">단일 EPG여도 우선순위 설정은 그대로 저장되며, 이후 처리 단계에서 가능한 범위 안에서 그대로 사용합니다.</div>
     </div>
   </div>
 </div>
@@ -39,6 +39,27 @@
     <div class="mb-3">{{ macros.m_button_group([['manual_save_btn_epg', '저장']]) }}</div>
 
     {{ macros.setting_input_text('basic_epg_xml_url', 'myepg XML 주소', value=arg.get('basic_epg_xml_url', ''), desc=['예: https://.../epg.xml', 'gzip(.gz) 주소도 자동 해제 시도']) }}
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">EPG 자동 갱신 사용</label>
+      <div class="col-sm-9">
+        <label style="display:flex; align-items:center; gap:8px; margin-top:7px;">
+          <input type="checkbox" id="basic_epg_auto_enabled" name="basic_epg_auto_enabled" value="True" {% if arg.get('basic_epg_auto_enabled') == 'True' %}checked{% endif %}>
+          <span>사용</span>
+        </label>
+        <input type="hidden" name="basic_epg_auto_enabled" value="False">
+        <small class="form-text text-muted">켜두면 아래 시각에 매일 myepg XML을 다시 불러와 캐시를 갱신합니다.</small>
+      </div>
+    </div>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">EPG 자동 갱신 시각</label>
+      <div class="col-sm-9">
+        <input type="text" class="form-control" id="basic_epg_auto_time" name="basic_epg_auto_time" value="{{ arg.get('basic_epg_auto_time', '03:30') }}" placeholder="03:30">
+        <small class="form-text text-muted">24시간 HH:MM 형식입니다. myepg가 03:00에 갱신되면 03:30 권장</small>
+      </div>
+    </div>
+
 
     <div class="ff-action-btn-row">
       <button type="button" class="btn btn-primary" id="epg_fetch_btn">EPG 불러오기 / 동기화</button>
@@ -59,6 +80,8 @@
       <div>로고 수: <strong id="epg_icon_count">{{ arg.get('basic_epg_icon_count', 0) or 0 }}</strong></div>
       <div>캐시 파일 크기(bytes): <strong id="epg_file_size">{{ arg.get('basic_epg_file_size', 0) or 0 }}</strong></div>
       <div>캐시 상태: <strong id="epg_cache_state">{{ '있음' if arg.get('epg_cache_exists') else '없음' }}</strong></div>
+      <div>자동 갱신 마지막 실행일: <strong>{{ arg.get('basic_epg_auto_last_run_date', '-') or '-' }}</strong></div>
+      <div>자동 갱신 마지막 결과: <strong>{{ arg.get('basic_epg_auto_last_result', '-') or '-' }}</strong></div>
     </div>
   </div>
 </div>
@@ -66,14 +89,14 @@
 <div class="card mb-4">
   <div class="card-header"><strong>전체 채널 미리보기</strong></div>
   <div class="card-body">
-    <div class="ff-mini-note">채널별 EPG id 연결 구조 설계 전에, 원본 XML에서 읽힌 전체 channel id / 대표명 / 사업자 / 로고 존재 여부를 확인하는 영역입니다.</div>
+    <div class="ff-mini-note">채널별 EPG id 연결 구조 설계 전에, 원본 XML에서 읽힌 전체 channel id / 대표명 / EPG / 로고 존재 여부를 확인하는 영역입니다.</div>
     <div class="table-responsive mt-3">
       <table class="table table-sm table-bordered">
         <thead>
           <tr>
             <th>EPG Channel ID</th>
             <th>대표 채널명</th>
-            <th>사업자</th>
+            <th>EPG</th>
             <th>display-name 샘플</th>
             <th>아이콘</th>
           </tr>

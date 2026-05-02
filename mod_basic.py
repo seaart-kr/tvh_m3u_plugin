@@ -2,6 +2,10 @@
 import importlib
 import sys
 import os
+import hashlib
+import threading
+import time
+import datetime as _epg_auto_dt
 import json
 import gzip
 import shutil
@@ -14,6 +18,7 @@ from flask import request, render_template, jsonify, redirect, Response, render_
 from .setup import *
 from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, ModelChannelProfile, ModelLogoOverride, DB_PATH
 from .task import Task
+from .task_custom_logo import handle_custom_logo_upload, handle_custom_logo_mirror
 
 
 def _is_sync_form(req):
@@ -511,6 +516,333 @@ def _get_epg_status_payload():
     return payload
 
 
+
+_EPG_AUTO_THREAD_STARTED = False
+_EPG_AUTO_LOCK = threading.Lock()
+
+
+def _normalize_epg_auto_time(value):
+    text = str(value or '').strip()
+    try:
+        hour, minute = text.split(':', 1)
+        hour = int(hour)
+        minute = int(minute)
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f'{hour:02d}:{minute:02d}'
+    except Exception:
+        pass
+    return '03:30'
+
+
+def _is_epg_auto_enabled():
+    value = str(P.ModelSetting.get('basic_epg_auto_enabled') or 'False').strip().lower()
+    return value in ['true', 'on', '1', 'yes', 'y']
+
+
+def _run_epg_fetch_from_settings(trigger='manual'):
+    epg_url = (P.ModelSetting.get('basic_epg_xml_url') or '').strip()
+    if not epg_url:
+        raise Exception('myepg XML 주소가 비어 있습니다.')
+
+    verify_ssl = str(P.ModelSetting.get('basic_tvh_use_verify_ssl') or 'False').strip().lower() in ['true', 'on', '1', 'yes', 'y']
+    meta = _fetch_epg_and_build_meta(epg_url, verify_ssl=verify_ssl)
+
+    P.ModelSetting.set('basic_epg_last_fetch_time', meta.get('fetched_at', ''))
+    P.ModelSetting.set('basic_epg_channel_count', str(meta.get('channel_count', 0)))
+    P.ModelSetting.set('basic_epg_programme_count', str(meta.get('programme_count', 0)))
+    P.ModelSetting.set('basic_epg_icon_count', str(meta.get('icon_count', 0)))
+    P.ModelSetting.set('basic_epg_file_size', str(meta.get('file_size', 0)))
+
+    if trigger == 'auto':
+        P.ModelSetting.set(
+            'basic_epg_auto_last_result',
+            f"{meta.get('fetched_at', '')} 성공 / 채널 {meta.get('channel_count', 0)} / 편성 {meta.get('programme_count', 0)}"
+        )
+
+    return meta
+
+
+def _epg_auto_scheduler_loop():
+    while True:
+        try:
+            if _is_epg_auto_enabled():
+                target_time = _normalize_epg_auto_time(P.ModelSetting.get('basic_epg_auto_time') or '03:30')
+                now = _epg_auto_dt.datetime.now()
+                today = now.strftime('%Y-%m-%d')
+                now_hm = now.strftime('%H:%M')
+                last_run_date = str(P.ModelSetting.get('basic_epg_auto_last_run_date') or '').strip()
+
+                if now_hm >= target_time and last_run_date != today:
+                    try:
+                        _run_epg_fetch_from_settings(trigger='auto')
+                        P.ModelSetting.set('basic_epg_auto_last_run_date', today)
+                    except Exception as e:
+                        P.ModelSetting.set('basic_epg_auto_last_result', f"{now.strftime('%Y-%m-%d %H:%M:%S')} 실패 / {str(e)}")
+                        logger.exception(f'[ff_tvh_m3u] epg auto refresh failed: {str(e)}')
+        except Exception as e:
+            logger.exception(f'[ff_tvh_m3u] epg auto scheduler loop failed: {str(e)}')
+
+        time.sleep(30)
+
+
+def _ensure_epg_auto_scheduler_started():
+    global _EPG_AUTO_THREAD_STARTED
+    if _EPG_AUTO_THREAD_STARTED:
+        return
+
+    with _EPG_AUTO_LOCK:
+        if _EPG_AUTO_THREAD_STARTED:
+            return
+
+        thread = threading.Thread(target=_epg_auto_scheduler_loop, name='ff_tvh_m3u_epg_auto', daemon=True)
+        thread.start()
+        _EPG_AUTO_THREAD_STARTED = True
+        logger.info('[ff_tvh_m3u] epg auto scheduler started')
+
+
+CUSTOM_LOGO_MAX_BYTES = 5 * 1024 * 1024
+CUSTOM_LOGO_ALLOWED_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']
+
+
+def _custom_logo_mirror_token():
+    return (
+        str(P.ModelSetting.get('basic_custom_logo_mirror_token') or '').strip()
+        or str(os.environ.get('TVH_M3U_CUSTOM_LOGO_MIRROR_TOKEN') or '').strip()
+    )
+
+
+def _custom_logo_mirror_url():
+    return (
+        str(P.ModelSetting.get('basic_custom_logo_mirror_url') or '').strip()
+        or 'https://ff.aha3011.mywire.org/tvh_m3u_plugin/api/custom_logo_mirror'
+    )
+
+
+def _sha1_bytes(data):
+    return hashlib.sha1(data or b'').hexdigest()
+
+
+def _save_custom_logo_file(file_storage, source_channel_name):
+    if file_storage is None:
+        raise Exception('업로드할 로고 파일이 없습니다.')
+
+    original_filename = os.path.basename(str(file_storage.filename or '').strip())
+    stored_filename = Task._make_uploaded_logo_filename(source_channel_name, original_filename)
+    ext = os.path.splitext(stored_filename)[1].lower()
+    if ext not in CUSTOM_LOGO_ALLOWED_EXTS:
+        raise Exception('지원하지 않는 이미지 확장자입니다.')
+
+    data = file_storage.read()
+    if not data:
+        raise Exception('업로드한 파일이 비어 있습니다.')
+    if len(data) > CUSTOM_LOGO_MAX_BYTES:
+        raise Exception('로고 파일은 5MB 이하만 업로드할 수 있습니다.')
+
+    asset_dir = Task._ensure_custom_logo_asset_dir()
+    output_path = os.path.join(asset_dir, stored_filename)
+    with open(output_path, 'wb') as f:
+        f.write(data)
+
+    return {
+        'stored_filename': stored_filename,
+        'output_path': output_path,
+        'sha1': _sha1_bytes(data),
+        'file_size': len(data),
+    }
+
+
+def _save_custom_logo_db(source_channel_name, standard_name='', aka_name='', stored_filename='', sha1='', file_size=0):
+    source_channel_name = str(source_channel_name or '').strip()
+    standard_name = str(standard_name or '').strip() or source_channel_name
+    aka_name = str(aka_name or '').strip()
+    stored_filename = os.path.basename(str(stored_filename or '').strip())
+    matched_channel_id = Task._resolve_lookup_matched_channel_id(standard_name) or Task._resolve_lookup_matched_channel_id(source_channel_name)
+    logo_url_template = Task._build_logo_public_template(stored_filename)
+
+    con = Task._connect_write_db()
+    cur = con.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS custom_logo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_channel_name TEXT DEFAULT '',
+        standard_name TEXT DEFAULT '',
+        aka_name TEXT DEFAULT '',
+        matched_channel_id TEXT DEFAULT '',
+        stored_filename TEXT DEFAULT '',
+        logo_url_template TEXT DEFAULT '',
+        final_url TEXT DEFAULT '',
+        sha1 TEXT DEFAULT '',
+        file_size INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT '',
+        updated_at TEXT DEFAULT ''
+    )
+    """)
+
+    cols = [row['name'] for row in cur.execute("PRAGMA table_info(custom_logo)").fetchall()]
+    now = _epg_now()
+
+    if 'source_channel_name' in cols and 'matched_channel_id' in cols:
+        cur.execute(
+            "DELETE FROM custom_logo WHERE source_channel_name = ? AND COALESCE(matched_channel_id, '') = ?",
+            (source_channel_name, matched_channel_id),
+        )
+
+    values = {
+        'provider': 'custom',
+        'source_channel_name': source_channel_name,
+        'provider_channel_name': source_channel_name,
+        'standard_name': standard_name,
+        'aka_name': aka_name,
+        'matched_channel_id': matched_channel_id,
+        'stored_filename': stored_filename,
+        'random_filename': stored_filename,
+        'logo_url_template': logo_url_template,
+        'final_url': logo_url_template,
+        'custom_logo_url': logo_url_template,
+        'sha1': sha1,
+        'file_size': file_size,
+        'created_at': now,
+        'updated_at': now,
+        'created_time': now,
+        'updated_time': now,
+    }
+
+    insert_cols = [col for col in cols if col in values]
+    if insert_cols:
+        placeholders = ','.join(['?'] * len(insert_cols))
+        cur.execute(
+            f"INSERT INTO custom_logo ({','.join(insert_cols)}) VALUES ({placeholders})",
+            [values[col] for col in insert_cols],
+        )
+
+    con.commit()
+    con.close()
+
+    try:
+        Task._load_logo_cache(force=True)
+    except Exception:
+        pass
+
+    return {
+        'matched_channel_id': matched_channel_id,
+        'standard_name': standard_name,
+        'logo_url_template': logo_url_template,
+    }
+
+
+def _mirror_custom_logo_to_owner(source_channel_name, standard_name, aka_name, file_path, stored_filename, sha1, file_size):
+    token = _custom_logo_mirror_token()
+    if not token:
+        return {'ret': 'skipped', 'msg': '원격 백업 토큰이 설정되지 않았습니다.'}
+
+    url = _custom_logo_mirror_url()
+    if not url:
+        return {'ret': 'skipped', 'msg': '원격 백업 주소가 설정되지 않았습니다.'}
+
+    try:
+        with open(file_path, 'rb') as f:
+            files = {'logo_file': (stored_filename, f)}
+            data = {
+                'source_channel_name': source_channel_name,
+                'standard_name': standard_name,
+                'aka_name': aka_name,
+                'stored_filename': stored_filename,
+                'sha1': sha1,
+                'file_size': str(file_size),
+            }
+            headers = {'X-Custom-Logo-Token': token}
+            resp = requests.post(url, data=data, files=files, headers=headers, timeout=30)
+            resp.raise_for_status()
+            try:
+                return resp.json()
+            except Exception:
+                return {'ret': 'success', 'msg': '원격 백업 완료'}
+    except Exception as e:
+        logger.warning(f'[ff_tvh_m3u] custom logo mirror failed: {str(e)}')
+        return {'ret': 'warning', 'msg': f'원격 백업 실패: {str(e)}'}
+
+
+def _handle_custom_logo_upload(req):
+    source_channel_name = str(req.form.get('source_channel_name') or '').strip()
+    standard_name = str(req.form.get('standard_name') or '').strip()
+    aka_name = str(req.form.get('aka_name') or '').strip()
+    logo_file = req.files.get('logo_file')
+
+    if not source_channel_name:
+        return {'ret': 'warning', 'msg': '원본 채널명을 입력하세요.'}
+
+    saved = _save_custom_logo_file(logo_file, source_channel_name)
+    db_info = _save_custom_logo_db(
+        source_channel_name=source_channel_name,
+        standard_name=standard_name,
+        aka_name=aka_name,
+        stored_filename=saved['stored_filename'],
+        sha1=saved['sha1'],
+        file_size=saved['file_size'],
+    )
+
+    mirror = _mirror_custom_logo_to_owner(
+        source_channel_name=source_channel_name,
+        standard_name=db_info.get('standard_name') or standard_name or source_channel_name,
+        aka_name=aka_name,
+        file_path=saved['output_path'],
+        stored_filename=saved['stored_filename'],
+        sha1=saved['sha1'],
+        file_size=saved['file_size'],
+    )
+
+    msg = '커스텀 로고를 업로드했습니다.'
+    if mirror.get('ret') in ['warning', 'danger']:
+        msg += ' 단, 원격 백업은 실패했습니다.'
+    elif mirror.get('ret') == 'success':
+        msg += ' 원격 백업도 완료했습니다.'
+
+    return {
+        'ret': 'success',
+        'msg': msg,
+        'stored_filename': saved['stored_filename'],
+        'standard_name': db_info.get('standard_name') or '',
+        'matched_channel_id': db_info.get('matched_channel_id') or '',
+        'logo_url_template': db_info.get('logo_url_template') or '',
+        'mirror': mirror,
+    }
+
+
+def _handle_custom_logo_mirror(req):
+    expected = _custom_logo_mirror_token()
+    received = str(req.headers.get('X-Custom-Logo-Token') or '').strip()
+
+    if not expected:
+        return {'ret': 'danger', 'msg': '원격 백업 토큰이 설정되지 않았습니다.'}
+    if received != expected:
+        return {'ret': 'danger', 'msg': '원격 백업 토큰이 올바르지 않습니다.'}
+
+    source_channel_name = str(req.form.get('source_channel_name') or '').strip()
+    standard_name = str(req.form.get('standard_name') or '').strip()
+    aka_name = str(req.form.get('aka_name') or '').strip()
+    logo_file = req.files.get('logo_file')
+
+    if not source_channel_name:
+        return {'ret': 'warning', 'msg': '원본 채널명이 비어 있습니다.'}
+
+    saved = _save_custom_logo_file(logo_file, source_channel_name)
+    db_info = _save_custom_logo_db(
+        source_channel_name=source_channel_name,
+        standard_name=standard_name,
+        aka_name=aka_name,
+        stored_filename=saved['stored_filename'],
+        sha1=saved['sha1'],
+        file_size=saved['file_size'],
+    )
+
+    return {
+        'ret': 'success',
+        'msg': '원격 백업 저장 완료',
+        'stored_filename': saved['stored_filename'],
+        'standard_name': db_info.get('standard_name') or '',
+        'matched_channel_id': db_info.get('matched_channel_id') or '',
+    }
+
 class ModuleBasic(PluginModuleBase):
     db_default = {
         'basic_tvh_api_base': '',
@@ -538,11 +870,21 @@ class ModuleBasic(PluginModuleBase):
         'basic_epg_file_size': '0',
         'basic_epg_provider_priority': 'kt,lgu,sk,daum,naver,wavve,tving,spotv',
         'basic_epg_provider_enabled': 'kt,lgu,sk,daum,naver,wavve,tving,spotv',
+        'basic_epg_auto_enabled': 'False',
+        'basic_epg_auto_time': '03:30',
+        'basic_epg_auto_last_run_date': '',
+        'basic_epg_auto_last_result': '',
+        'basic_custom_logo_mirror_url': 'https://ff.aha3011.mywire.org/tvh_m3u_plugin/normal/custom_logo_mirror',
+        'basic_custom_logo_mirror_token': '',
         'basic_logo_priority': 'custom,kt,wavve,tving,sk',
     }
 
     def __init__(self, P):
         super(ModuleBasic, self).__init__(P, name='basic', first_menu='sync')
+        try:
+            _ensure_epg_auto_scheduler_started()
+        except Exception as e:
+            logger.exception(f'[ff_tvh_m3u] epg auto scheduler start failed: {str(e)}')
 
     def process_menu(self, sub, req):
         try:
@@ -722,20 +1064,17 @@ class ModuleBasic(PluginModuleBase):
             elif sub == 'logo_preview_select':
                 return jsonify({
                     'ret': 'warning',
-                    'msg': '로고 선택 저장은 관리자 FF의 ff_tvh_sheet_write 플러그인에서 처리하세요.',
+                    'msg': '로고 선택 저장 기능은 아직 지원하지 않습니다.',
                 })
 
             elif sub == 'logo_preview_clear':
                 return jsonify({
                     'ret': 'warning',
-                    'msg': '로고 선택 초기화는 관리자 FF의 ff_tvh_sheet_write 플러그인에서 처리하세요.',
+                    'msg': '로고 선택 초기화 기능은 아직 지원하지 않습니다.',
                 })
 
             elif sub == 'upload_custom_logo':
-                return jsonify({
-                    'ret': 'warning',
-                    'msg': '커스텀 로고 업로드는 관리자 FF의 ff_tvh_sheet_write 플러그인에서 처리하세요.',
-                })
+                return jsonify(handle_custom_logo_upload(req))
 
             elif sub == 'epg_status':
                 return jsonify(_get_epg_status_payload())
@@ -758,7 +1097,7 @@ class ModuleBasic(PluginModuleBase):
                         provider_msg = ' / 통합 EPG 감지: ' + ', '.join([f"{row.get('label')}({row.get('count')})" for row in provider_rows])
                     elif meta.get('provider_mode') == 'single' and provider_rows:
                         row = provider_rows[0]
-                        provider_msg = f" / 단일 사업자 EPG 감지: {row.get('label')}({row.get('count')}) - 우선순위 설정과 무관하게 계속 진행 가능"
+                        provider_msg = f" / 단일 EPG 감지: {row.get('label')}({row.get('count')}) - 우선순위 설정과 무관하게 계속 진행 가능"
                     else:
                         provider_msg = ''
                     return jsonify({
@@ -847,6 +1186,15 @@ class ModuleBasic(PluginModuleBase):
             logger.exception(f'[ff_tvh_m3u] process_ajax exception: {str(e)}')
             return jsonify({'ret': 'danger', 'msg': str(e)})
 
+    def process_normal(self, sub, req):
+        try:
+            if sub == 'custom_logo_mirror':
+                return jsonify(handle_custom_logo_mirror(req))
+            return jsonify({'ret': 'warning', 'msg': 'unknown normal request'})
+        except Exception as e:
+            logger.exception(f'[ff_tvh_m3u] process_normal exception: {str(e)}')
+            return jsonify({'ret': 'danger', 'msg': str(e)})
+
     def process_api(self, sub, req):
         try:
             gate = _check_sjva_or_block('api')
@@ -876,6 +1224,9 @@ class ModuleBasic(PluginModuleBase):
                     mimetype='audio/x-mpegurl',
                     headers={'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
                 )
+
+            elif sub == 'custom_logo_mirror':
+                return jsonify(handle_custom_logo_mirror(req))
 
             elif sub == 'epg_raw':
                 xml_path = _epg_cache_xml_path()
