@@ -352,7 +352,7 @@ class TaskSheet(TaskBase):
                 previous_sheet_logo_wave2 = str(getattr(row, 'sheet_logo_wave2', '') or '').strip()
 
                 manual_group_name = str(getattr(row, 'manual_group_name', '') or '').strip()
-                matched_group_name = str(info.get('group_name') or '').strip()
+                matched_group_name = ModelGroupOrder.normalize_group_name(str(info.get('group_name') or '').strip())
 
                 custom_logo_url = str(info.get('custom_logo_url') or '').strip()
                 provider_logo_url = str(info.get('provider_logo_url') or '').strip()

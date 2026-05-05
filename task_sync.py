@@ -67,9 +67,9 @@ class TaskSync(TaskBase):
                     if tag_uuid_str in tag_map:
                         tag_names.append(tag_map[tag_uuid_str])
 
-                tvh_group_name = tag_names[0] if tag_names else '그룹 없음'
+                tvh_group_name = ModelGroupOrder.normalize_group_name(tag_names[0] if tag_names else '그룹 없음')
                 channel_name = str(item.get('name', '')).strip() or channel_uuid
-                manual_group_name = str(manual_group_map.get(channel_uuid, '') or '').strip()
+                manual_group_name = ModelGroupOrder.normalize_group_name(str(manual_group_map.get(channel_uuid, '') or '').strip())
                 effective_group_name = manual_group_name or tvh_group_name or '그룹 없음'
 
                 channel_rows.append({

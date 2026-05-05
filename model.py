@@ -575,11 +575,12 @@ class ModelChannel:
     def get_effective_group_name(self):
         manual = str(self.manual_group_name or '').strip()
         if manual:
-            return manual
+            return ModelGroupOrder.normalize_group_name(manual)
         sheet_group = str(self.sheet_group_name or '').strip()
         if sheet_group:
-            return sheet_group
-        return str(self.group_name or '').strip() or '그룹 없음'
+            return ModelGroupOrder.normalize_group_name(sheet_group)
+        group_name = str(self.group_name or '').strip() or '그룹 없음'
+        return ModelGroupOrder.normalize_group_name(group_name)
 
     @staticmethod
     def from_row(row):
@@ -719,7 +720,7 @@ class ModelChannel:
     def assign_manual_group(channel_uuids, group_name):
         init_db()
         channel_uuids = [str(x).strip() for x in (channel_uuids or []) if str(x).strip()]
-        group_name = str(group_name or '').strip()
+        group_name = ModelGroupOrder.normalize_group_name(str(group_name or '').strip())
         if not channel_uuids or not group_name:
             return 0
 
