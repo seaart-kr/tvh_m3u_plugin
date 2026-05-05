@@ -350,7 +350,7 @@ class ModelGroupOrder:
     @staticmethod
     def get_priority_list():
         return [
-            '지상파', '종합편성/종편', '연예/오락', '드라마', '영화', '스포츠',
+            '지상파', '종합편성', '연예/오락', '드라마', '영화', '스포츠',
             '뉴스/경제', '음악', '어린이/만화', '교양/다큐', '교육', '여성/패션',
             '레저', '공공', '종교', '홈쇼핑', '해외위성', '라디오', '기타',
         ]
@@ -360,7 +360,7 @@ class ModelGroupOrder:
         name = str(group_name or '').strip()
         compact = name.replace(' ', '')
         if compact in ['종편', '종합편성', '종합편성/종편']:
-            return '종합편성/종편'
+            return '종합편성'
         if compact in ['뉴스', '경제', '뉴스/경제']:
             return '뉴스/경제'
         if compact in ['어린이', '어린이/애니', '애니', '만화', '어린이/만화']:
