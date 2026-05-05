@@ -344,6 +344,10 @@ def _epg_cache_tvh_xml_path():
     return os.path.join(_epg_cache_dir(), 'myepg_tvh.xml')
 
 
+def _epg_cache_match_json_path():
+    return os.path.join(_epg_cache_dir(), 'myepg_tvh.match.json')
+
+
 def _epg_cache_meta_path():
     return os.path.join(_epg_cache_dir(), 'myepg_raw.meta.json')
 
@@ -517,6 +521,7 @@ def _build_epg_tvh_cache(xml_path=None):
     root_attrs = {}
     root_seen = False
     epg_index = {}
+    epg_entries = []
 
     def add_index(name_value, provider_key, entry):
         for candidate_value in _iter_epg_match_values(name_value):
@@ -565,6 +570,7 @@ def _build_epg_tvh_cache(xml_path=None):
             for name in display_names:
                 add_index(name, provider_key, entry)
             add_index(channel_id, provider_key, entry)
+            epg_entries.append(entry)
             elem.clear()
         elif tag == 'programme':
             elem.clear()
@@ -573,6 +579,26 @@ def _build_epg_tvh_cache(xml_path=None):
     raw_id_to_uuids = {}
     matched_count = 0
     unmatched_count = 0
+    match_rows = []
+
+    def find_fallback_candidate(search_keys):
+        for provider_key in provider_order:
+            provider_entries = [
+                item for item in epg_entries
+                if item.get('provider') == provider_key
+            ]
+            for search_key in search_keys:
+                if len(search_key) < 3:
+                    continue
+                for item in provider_entries:
+                    for display_name in item.get('display_names') or []:
+                        for candidate_value in _iter_epg_match_values(display_name):
+                            epg_key = _normalize_epg_match_name(candidate_value)
+                            if len(epg_key) < 3:
+                                continue
+                            if search_key in epg_key or epg_key in search_key:
+                                return item, 'contains'
+        return None, ''
 
     for row in ModelChannel.get_all():
         try:
@@ -600,23 +626,43 @@ def _build_epg_tvh_cache(xml_path=None):
                     search_keys.append(norm)
 
         selected = None
+        match_rule = ''
         for provider_key in provider_order:
             for search_key in search_keys:
                 candidate = epg_index.get(search_key, {}).get(provider_key)
                 if candidate is not None:
                     selected = candidate
+                    match_rule = 'exact'
                     break
             if selected is not None:
                 break
 
         if selected is None:
+            selected, match_rule = find_fallback_candidate(search_keys)
+
+        if selected is None:
             unmatched_count += 1
+            match_rows.append({
+                'channel_uuid': channel_uuid,
+                'channel_name': channel_name,
+                'matched': False,
+                'search_keys': search_keys,
+            })
             continue
 
         try:
             channel_elem = ET.fromstring(selected.get('xml') or b'')
         except Exception:
             unmatched_count += 1
+            match_rows.append({
+                'channel_uuid': channel_uuid,
+                'channel_name': channel_name,
+                'matched': False,
+                'reason': 'selected_xml_parse_failed',
+                'search_keys': search_keys,
+                'source_channel_id': selected.get('channel_id'),
+                'source_display_names': selected.get('display_names') or [],
+            })
             continue
 
         channel_elem.set('id', channel_uuid)
@@ -637,6 +683,16 @@ def _build_epg_tvh_cache(xml_path=None):
         })
         raw_id_to_uuids.setdefault(selected.get('channel_id'), []).append(channel_uuid)
         matched_count += 1
+        match_rows.append({
+            'channel_uuid': channel_uuid,
+            'channel_name': channel_name,
+            'matched': True,
+            'match_rule': match_rule,
+            'matched_provider': selected.get('provider'),
+            'source_channel_id': selected.get('channel_id'),
+            'source_display_names': selected.get('display_names') or [],
+            'search_keys': search_keys,
+        })
 
     channel_count = 0
     programme_count = 0
@@ -667,6 +723,18 @@ def _build_epg_tvh_cache(xml_path=None):
         fw.write(f'</{root_tag}>\n'.encode('utf-8'))
 
     os.replace(tmp_path, final_path)
+    try:
+        with open(_epg_cache_match_json_path(), 'w', encoding='utf-8') as f:
+            json.dump({
+                'created_at': _epg_now(),
+                'matched_count': matched_count,
+                'unmatched_count': unmatched_count,
+                'provider_order': provider_order,
+                'rows': match_rows,
+            }, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f'[ff_tvh_m3u] save epg tvh match json failed: {str(e)}')
+
     file_size = os.path.getsize(final_path) if os.path.exists(final_path) else 0
     return {
         'tvh_cache_exists': os.path.exists(final_path),
@@ -679,6 +747,7 @@ def _build_epg_tvh_cache(xml_path=None):
         'tvh_provider_enabled': provider_state.get('enabled_csv', ''),
         'tvh_provider_priority': provider_state.get('priority_csv', ''),
     }
+
 
 def _epg_tvh_cache_needs_rebuild():
     raw_path = _epg_cache_xml_path()
