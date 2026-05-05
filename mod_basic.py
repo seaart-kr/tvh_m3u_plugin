@@ -11,6 +11,7 @@ import gzip
 import shutil
 from datetime import datetime
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import quoteattr
 
 import requests
 from flask import request, render_template, jsonify, redirect, Response, render_template_string
@@ -328,6 +329,10 @@ def _epg_cache_xml_path():
     return os.path.join(_epg_cache_dir(), 'myepg_raw.xml')
 
 
+def _epg_cache_tvh_xml_path():
+    return os.path.join(_epg_cache_dir(), 'myepg_tvh.xml')
+
+
 def _epg_cache_meta_path():
     return os.path.join(_epg_cache_dir(), 'myepg_raw.meta.json')
 
@@ -338,6 +343,225 @@ def _epg_now():
 
 def _safe_tag_name(tag):
     return str(tag).split('}', 1)[-1] if tag else ''
+
+
+def _iter_file_chunks(path, chunk_size=1024 * 256):
+    with open(path, 'rb') as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+
+def _normalize_epg_match_name(value):
+    text = str(value or '').strip().lower()
+    return ''.join(ch for ch in text if ch.isalnum())
+
+
+def _get_epg_provider_state_from_settings():
+    return _build_epg_provider_rows(
+        P.ModelSetting.get('basic_epg_provider_enabled') or '',
+        P.ModelSetting.get('basic_epg_provider_priority') or '',
+    )
+
+
+def _get_epg_enabled_provider_set():
+    state = _get_epg_provider_state_from_settings()
+    return {row.get('key') for row in state.get('rows', []) if row.get('enabled')}
+
+
+def _get_epg_provider_rank_map():
+    state = _get_epg_provider_state_from_settings()
+    return {
+        row.get('key'): index
+        for index, row in enumerate(state.get('rows', []))
+        if row.get('key')
+    }
+
+
+def _xml_start_tag(name, attrs):
+    pieces = [f'<{name}']
+    for key, value in (attrs or {}).items():
+        pieces.append(f' {key}={quoteattr(str(value))}')
+    pieces.append('>
+')
+    return ''.join(pieces)
+
+
+def _update_epg_channel_icon(channel_elem, base_url=''):
+    display_names = []
+    icon_elem = None
+    current_icon_url = ''
+
+    for child in list(channel_elem):
+        tag = _safe_tag_name(child.tag)
+        if tag == 'display-name':
+            name_text = str(child.text or '').strip()
+            if name_text:
+                display_names.append(name_text)
+        elif tag == 'icon':
+            icon_elem = child
+            current_icon_url = str(child.attrib.get('src') or '').strip()
+
+    channel_name = display_names[0] if display_names else str(channel_elem.attrib.get('id') or '').strip()
+    final_logo_url = Task.get_effective_logo_url(
+        channel_name=channel_name,
+        sheet_logo_url=current_icon_url,
+        matched_channel_id='',
+        base_url=base_url,
+    )
+    if not final_logo_url:
+        return
+
+    if icon_elem is None:
+        icon_elem = ET.SubElement(channel_elem, 'icon')
+    icon_elem.set('src', final_logo_url)
+
+
+def _build_epg_tvh_cache(xml_path=None):
+    raw_xml_path = xml_path or _epg_cache_xml_path()
+    if not os.path.exists(raw_xml_path):
+        return {
+            'tvh_cache_exists': False,
+            'tvh_file_size': 0,
+            'tvh_channel_count': 0,
+            'tvh_programme_count': 0,
+        }
+
+    cache_dir = _epg_cache_dir()
+    tmp_path = os.path.join(cache_dir, 'myepg_tvh.tmp.xml')
+    final_path = _epg_cache_tvh_xml_path()
+    enabled_set = _get_epg_enabled_provider_set()
+    rank_map = _get_epg_provider_rank_map()
+    provider_state = _get_epg_provider_state_from_settings()
+    base_url = ''
+    try:
+        base_url = Task._get_request_base_url()
+    except Exception:
+        base_url = ''
+
+    root_tag = 'tv'
+    root_attrs = {}
+    root_seen = False
+    selected_by_name = {}
+
+    context = ET.iterparse(raw_xml_path, events=('start', 'end'))
+    for event, elem in context:
+        if event == 'start' and not root_seen:
+            root_tag = _safe_tag_name(elem.tag) or 'tv'
+            root_attrs = dict(elem.attrib or {})
+            root_seen = True
+            continue
+
+        if event != 'end':
+            continue
+
+        tag = _safe_tag_name(elem.tag)
+        if tag == 'channel':
+            channel_id = str(elem.attrib.get('id') or '').strip()
+            provider_key = _detect_provider_from_channel_id(channel_id)
+            if provider_key and enabled_set and provider_key not in enabled_set:
+                elem.clear()
+                continue
+
+            display_names = []
+            for child in list(elem):
+                if _safe_tag_name(child.tag) == 'display-name':
+                    name_text = str(child.text or '').strip()
+                    if name_text:
+                        display_names.append(name_text)
+
+            match_key = ''
+            for name in display_names:
+                match_key = _normalize_epg_match_name(name)
+                if match_key:
+                    break
+            if not match_key:
+                match_key = _normalize_epg_match_name(channel_id) or channel_id
+
+            rank = rank_map.get(provider_key, 9999)
+            previous = selected_by_name.get(match_key)
+            if previous is None or rank < previous.get('rank', 9999):
+                _update_epg_channel_icon(elem, base_url=base_url)
+                selected_by_name[match_key] = {
+                    'rank': rank,
+                    'channel_id': channel_id,
+                    'xml': ET.tostring(elem, encoding='utf-8'),
+                }
+            elem.clear()
+        elif tag == 'programme':
+            elem.clear()
+
+    selected_ids = {
+        item.get('channel_id')
+        for item in selected_by_name.values()
+        if item.get('channel_id')
+    }
+
+    channel_count = 0
+    programme_count = 0
+    with open(tmp_path, 'wb') as fw:
+        fw.write(b'<?xml version="1.0" encoding="UTF-8"?>
+')
+        fw.write(_xml_start_tag(root_tag, root_attrs).encode('utf-8'))
+
+        for item in selected_by_name.values():
+            fw.write(item.get('xml') or b'')
+            fw.write(b'
+')
+            channel_count += 1
+
+        context = ET.iterparse(raw_xml_path, events=('end',))
+        for _event, elem in context:
+            tag = _safe_tag_name(elem.tag)
+            if tag == 'programme':
+                channel_id = str(elem.attrib.get('channel') or '').strip()
+                if channel_id in selected_ids:
+                    fw.write(ET.tostring(elem, encoding='utf-8'))
+                    fw.write(b'
+')
+                    programme_count += 1
+                elem.clear()
+            elif tag == 'channel':
+                elem.clear()
+
+        fw.write(f'</{root_tag}>
+'.encode('utf-8'))
+
+    os.replace(tmp_path, final_path)
+    file_size = os.path.getsize(final_path) if os.path.exists(final_path) else 0
+    return {
+        'tvh_cache_exists': os.path.exists(final_path),
+        'tvh_cache_path': final_path,
+        'tvh_file_size': file_size,
+        'tvh_channel_count': channel_count,
+        'tvh_programme_count': programme_count,
+        'tvh_provider_enabled': provider_state.get('enabled_csv', ''),
+        'tvh_provider_priority': provider_state.get('priority_csv', ''),
+    }
+
+
+def _epg_tvh_cache_needs_rebuild():
+    raw_path = _epg_cache_xml_path()
+    tvh_path = _epg_cache_tvh_xml_path()
+    if not os.path.exists(raw_path):
+        return False
+    if not os.path.exists(tvh_path):
+        return True
+    try:
+        if os.path.getmtime(raw_path) > os.path.getmtime(tvh_path):
+            return True
+    except Exception:
+        return True
+
+    meta = _load_epg_meta()
+    provider_state = _get_epg_provider_state_from_settings()
+    if str(meta.get('tvh_provider_enabled') or '') != str(provider_state.get('enabled_csv') or ''):
+        return True
+    if str(meta.get('tvh_provider_priority') or '') != str(provider_state.get('priority_csv') or ''):
+        return True
+    return False
 
 
 def _load_epg_meta():
@@ -476,6 +700,7 @@ def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
 def _fetch_epg_and_build_meta(url, verify_ssl=True):
     xml_path = _prepare_epg_xml_from_url(url, verify_ssl=verify_ssl)
     summary = _summarize_epg_xml(xml_path)
+    tvh_summary = _build_epg_tvh_cache(xml_path)
     meta = {
         'ret': 'success',
         'fetched_at': _epg_now(),
@@ -489,6 +714,12 @@ def _fetch_epg_and_build_meta(url, verify_ssl=True):
         'detected_provider_keys': summary.get('detected_provider_keys', []),
         'provider_rows': summary.get('provider_rows', []),
         'provider_mode': summary.get('provider_mode', 'unknown'),
+        'tvh_cache_exists': tvh_summary.get('tvh_cache_exists', False),
+        'tvh_file_size': tvh_summary.get('tvh_file_size', 0),
+        'tvh_channel_count': tvh_summary.get('tvh_channel_count', 0),
+        'tvh_programme_count': tvh_summary.get('tvh_programme_count', 0),
+        'tvh_provider_enabled': tvh_summary.get('tvh_provider_enabled', ''),
+        'tvh_provider_priority': tvh_summary.get('tvh_provider_priority', ''),
     }
     _save_epg_meta(meta)
     return meta
@@ -1241,13 +1472,45 @@ class ModuleBasic(PluginModuleBase):
                 )
 
             elif sub == 'epg_tvh':
-                data = Task.build_epg_xml(target='tvh')
-                if not data:
+
+
+                xml_path = _epg_cache_tvh_xml_path()
+
+
+                if _epg_tvh_cache_needs_rebuild():
+
+
+                    tvh_summary = _build_epg_tvh_cache(_epg_cache_xml_path())
+
+
+                    meta = _load_epg_meta()
+
+
+                    meta.update(tvh_summary)
+
+
+                    _save_epg_meta(meta)
+
+
+
+                if not os.path.exists(xml_path):
+
+
                     return Response('EPG cache not found', status=404, mimetype='text/plain')
+
+
                 return Response(
-                    data,
+
+
+                    _iter_file_chunks(xml_path),
+
+
                     mimetype='application/xml',
+
+
                     headers={'Content-Disposition': 'inline; filename=tvh_epg.xml'}
+
+
                 )
 
             elif sub == 'epg_tivimate':
