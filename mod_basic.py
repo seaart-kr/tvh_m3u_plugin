@@ -384,8 +384,7 @@ def _xml_start_tag(name, attrs):
     pieces = [f'<{name}']
     for key, value in (attrs or {}).items():
         pieces.append(f' {key}={quoteattr(str(value))}')
-    pieces.append('>
-')
+    pieces.append('>\n')
     return ''.join(pieces)
 
 
@@ -502,14 +501,12 @@ def _build_epg_tvh_cache(xml_path=None):
     channel_count = 0
     programme_count = 0
     with open(tmp_path, 'wb') as fw:
-        fw.write(b'<?xml version="1.0" encoding="UTF-8"?>
-')
+        fw.write(b'<?xml version="1.0" encoding="UTF-8"?>\n')
         fw.write(_xml_start_tag(root_tag, root_attrs).encode('utf-8'))
 
         for item in selected_by_name.values():
             fw.write(item.get('xml') or b'')
-            fw.write(b'
-')
+            fw.write(b'\n')
             channel_count += 1
 
         context = ET.iterparse(raw_xml_path, events=('end',))
@@ -519,15 +516,13 @@ def _build_epg_tvh_cache(xml_path=None):
                 channel_id = str(elem.attrib.get('channel') or '').strip()
                 if channel_id in selected_ids:
                     fw.write(ET.tostring(elem, encoding='utf-8'))
-                    fw.write(b'
-')
+                    fw.write(b'\n')
                     programme_count += 1
                 elem.clear()
             elif tag == 'channel':
                 elem.clear()
 
-        fw.write(f'</{root_tag}>
-'.encode('utf-8'))
+        fw.write(f'</{root_tag}>\n'.encode('utf-8'))
 
     os.replace(tmp_path, final_path)
     file_size = os.path.getsize(final_path) if os.path.exists(final_path) else 0
