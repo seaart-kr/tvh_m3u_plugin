@@ -439,6 +439,41 @@ def _build_epg_tvh_cache(xml_path=None):
         for row in provider_state.get('rows', [])
         if row.get('enabled') and row.get('key')
     ]
+    db_rules = {}
+    try:
+        db_rules = Task.load_db_rules()
+    except Exception as e:
+        logger.warning(f'[ff_tvh_m3u] load db rules for epg tvh cache failed: {str(e)}')
+
+    def append_unique(values, value):
+        text = str(value or '').strip()
+        if text and text not in values:
+            values.append(text)
+
+    def get_db_rule_candidate_values(channel_name):
+        values = []
+        if not db_rules:
+            return values
+        try:
+            info, _match_type = Task.match_channel(channel_name, db_rules)
+            if not info:
+                return values
+
+            matched_id = str(info.get('channel_master_id') or '').strip()
+            append_unique(values, info.get('standard_name'))
+            if not matched_id:
+                return values
+
+            for rule_map in (db_rules or {}).values():
+                if not isinstance(rule_map, dict):
+                    continue
+                for candidate_name, candidate_info in rule_map.items():
+                    if str((candidate_info or {}).get('channel_master_id') or '').strip() == matched_id:
+                        append_unique(values, candidate_name)
+        except Exception as e:
+            logger.warning(f'[ff_tvh_m3u] build epg db candidates failed channel={channel_name}: {str(e)}')
+        return values
+
     base_url = ''
     try:
         base_url = Task._get_request_base_url()
@@ -523,7 +558,7 @@ def _build_epg_tvh_cache(xml_path=None):
             channel_name,
             getattr(row, 'sheet_channel_id', ''),
             getattr(row, 'sheet_group_name', ''),
-        ]:
+        ] + get_db_rule_candidate_values(channel_name):
             norm = _normalize_epg_match_name(value)
             if norm and norm not in search_keys:
                 search_keys.append(norm)
