@@ -434,6 +434,11 @@ def _build_epg_tvh_cache(xml_path=None):
     enabled_set = _get_epg_enabled_provider_set()
     rank_map = _get_epg_provider_rank_map()
     provider_state = _get_epg_provider_state_from_settings()
+    provider_order = [
+        row.get('key')
+        for row in provider_state.get('rows', [])
+        if row.get('enabled') and row.get('key')
+    ]
     base_url = ''
     try:
         base_url = Task._get_request_base_url()
@@ -443,7 +448,16 @@ def _build_epg_tvh_cache(xml_path=None):
     root_tag = 'tv'
     root_attrs = {}
     root_seen = False
-    selected_by_name = {}
+    epg_index = {}
+
+    def add_index(name_value, provider_key, entry):
+        norm = _normalize_epg_match_name(name_value)
+        if not norm:
+            return
+        epg_index.setdefault(norm, {})
+        previous = epg_index[norm].get(provider_key)
+        if previous is None or entry.get('rank', 9999) < previous.get('rank', 9999):
+            epg_index[norm][provider_key] = entry
 
     context = ET.iterparse(raw_xml_path, events=('start', 'end'))
     for event, elem in context:
@@ -471,32 +485,87 @@ def _build_epg_tvh_cache(xml_path=None):
                     if name_text:
                         display_names.append(name_text)
 
-            match_key = ''
-            for name in display_names:
-                match_key = _normalize_epg_match_name(name)
-                if match_key:
-                    break
-            if not match_key:
-                match_key = _normalize_epg_match_name(channel_id) or channel_id
-
             rank = rank_map.get(provider_key, 9999)
-            previous = selected_by_name.get(match_key)
-            if previous is None or rank < previous.get('rank', 9999):
-                _update_epg_channel_icon(elem, base_url=base_url)
-                selected_by_name[match_key] = {
-                    'rank': rank,
-                    'channel_id': channel_id,
-                    'xml': ET.tostring(elem, encoding='utf-8'),
-                }
+            entry = {
+                'rank': rank,
+                'provider': provider_key,
+                'channel_id': channel_id,
+                'display_names': display_names,
+                'xml': ET.tostring(elem, encoding='utf-8'),
+            }
+            for name in display_names:
+                add_index(name, provider_key, entry)
+            add_index(channel_id, provider_key, entry)
             elem.clear()
         elif tag == 'programme':
             elem.clear()
 
-    selected_ids = {
-        item.get('channel_id')
-        for item in selected_by_name.values()
-        if item.get('channel_id')
-    }
+    selected_channels = []
+    raw_id_to_uuids = {}
+    matched_count = 0
+    unmatched_count = 0
+
+    for row in ModelChannel.get_all():
+        try:
+            enabled = bool(getattr(row, 'enabled', True))
+        except Exception:
+            enabled = True
+        if not enabled:
+            continue
+
+        channel_uuid = str(getattr(row, 'channel_uuid', '') or '').strip()
+        channel_name = str(getattr(row, 'name', '') or '').strip()
+        if not channel_uuid or not channel_name:
+            continue
+
+        search_keys = []
+        for value in [
+            channel_name,
+            getattr(row, 'sheet_channel_id', ''),
+            getattr(row, 'sheet_group_name', ''),
+        ]:
+            norm = _normalize_epg_match_name(value)
+            if norm and norm not in search_keys:
+                search_keys.append(norm)
+
+        selected = None
+        for provider_key in provider_order:
+            for search_key in search_keys:
+                candidate = epg_index.get(search_key, {}).get(provider_key)
+                if candidate is not None:
+                    selected = candidate
+                    break
+            if selected is not None:
+                break
+
+        if selected is None:
+            unmatched_count += 1
+            continue
+
+        try:
+            channel_elem = ET.fromstring(selected.get('xml') or b'')
+        except Exception:
+            unmatched_count += 1
+            continue
+
+        channel_elem.set('id', channel_uuid)
+        first_display = None
+        for child in list(channel_elem):
+            if _safe_tag_name(child.tag) == 'display-name':
+                first_display = child
+                break
+        if first_display is None:
+            first_display = ET.SubElement(channel_elem, 'display-name')
+        first_display.text = channel_name
+
+        _update_epg_channel_icon(channel_elem, base_url=base_url)
+        selected_channels.append({
+            'channel_uuid': channel_uuid,
+            'source_channel_id': selected.get('channel_id'),
+            'xml': ET.tostring(channel_elem, encoding='utf-8'),
+        })
+        raw_id_to_uuids.setdefault(selected.get('channel_id'), []).append(channel_uuid)
+        matched_count += 1
 
     channel_count = 0
     programme_count = 0
@@ -504,7 +573,7 @@ def _build_epg_tvh_cache(xml_path=None):
         fw.write(b'<?xml version="1.0" encoding="UTF-8"?>\n')
         fw.write(_xml_start_tag(root_tag, root_attrs).encode('utf-8'))
 
-        for item in selected_by_name.values():
+        for item in selected_channels:
             fw.write(item.get('xml') or b'')
             fw.write(b'\n')
             channel_count += 1
@@ -514,7 +583,9 @@ def _build_epg_tvh_cache(xml_path=None):
             tag = _safe_tag_name(elem.tag)
             if tag == 'programme':
                 channel_id = str(elem.attrib.get('channel') or '').strip()
-                if channel_id in selected_ids:
+                target_uuids = raw_id_to_uuids.get(channel_id) or []
+                for target_uuid in target_uuids:
+                    elem.set('channel', target_uuid)
                     fw.write(ET.tostring(elem, encoding='utf-8'))
                     fw.write(b'\n')
                     programme_count += 1
@@ -532,10 +603,11 @@ def _build_epg_tvh_cache(xml_path=None):
         'tvh_file_size': file_size,
         'tvh_channel_count': channel_count,
         'tvh_programme_count': programme_count,
+        'tvh_matched_channel_count': matched_count,
+        'tvh_unmatched_channel_count': unmatched_count,
         'tvh_provider_enabled': provider_state.get('enabled_csv', ''),
         'tvh_provider_priority': provider_state.get('priority_csv', ''),
     }
-
 
 def _epg_tvh_cache_needs_rebuild():
     raw_path = _epg_cache_xml_path()
