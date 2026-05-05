@@ -424,7 +424,8 @@ class ModelGroupOrder:
     @staticmethod
     def sync_from_group_names(group_names):
         init_db()
-        group_names = [str(x).strip() for x in (group_names or []) if str(x).strip()]
+        group_names = [ModelGroupOrder.normalize_group_name(str(x).strip()) for x in (group_names or []) if str(x).strip()]
+        group_names = list(dict.fromkeys([name for name in group_names if name]))
         current_rows = ModelGroupOrder.get_all()
         current_map = {row.group_name: row for row in current_rows}
         next_order = max([row.sort_order for row in current_rows], default=-1) + 1
@@ -455,8 +456,7 @@ class ModelGroupOrder:
 
         if changed:
             ModelGroupOrder.normalize_orders()
-        if not current_rows:
-            ModelGroupOrder.reorder_by_priority()
+        ModelGroupOrder.reorder_by_priority()
 
     @staticmethod
     def move(group_name, direction):
