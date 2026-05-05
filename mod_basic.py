@@ -321,8 +321,18 @@ def _check_sjva_or_block(mode='html'):
 
 
 def _epg_cache_dir():
-    path = '/data/tmp/ff_tvh_m3u_epg_cache'
+    path = '/data/data/tvh_m3u_plugin/epg_cache'
+    old_path = '/data/tmp/ff_tvh_m3u_epg_cache'
     os.makedirs(path, exist_ok=True)
+    try:
+        if os.path.isdir(old_path):
+            for name in ['myepg_raw.xml', 'myepg_raw.meta.json', 'myepg_tvh.xml']:
+                src = os.path.join(old_path, name)
+                dst = os.path.join(path, name)
+                if os.path.exists(src) and not os.path.exists(dst):
+                    shutil.copy2(src, dst)
+    except Exception as e:
+        logger.warning(f'[ff_tvh_m3u] migrate epg cache failed: {str(e)}')
     return path
 
 
