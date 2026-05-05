@@ -2,6 +2,7 @@
 import importlib
 import sys
 import os
+import re
 import hashlib
 import threading
 import time
@@ -359,6 +360,28 @@ def _normalize_epg_match_name(value):
     return ''.join(ch for ch in text if ch.isalnum())
 
 
+def _strip_epg_channel_number_prefix(value):
+    text = str(value or '').strip()
+    return re.sub(r'^\s*\d+(?:\.\d+)?\s+', '', text).strip()
+
+
+def _iter_epg_match_values(value):
+    text = str(value or '').strip()
+    if not text:
+        return []
+    values = []
+
+    def append(value):
+        item = str(value or '').strip()
+        if item and item not in values:
+            values.append(item)
+
+    append(text)
+    stripped = _strip_epg_channel_number_prefix(text)
+    append(stripped)
+    return values
+
+
 def _get_epg_provider_state_from_settings():
     return _build_epg_provider_rows(
         P.ModelSetting.get('basic_epg_provider_enabled') or '',
@@ -486,13 +509,14 @@ def _build_epg_tvh_cache(xml_path=None):
     epg_index = {}
 
     def add_index(name_value, provider_key, entry):
-        norm = _normalize_epg_match_name(name_value)
-        if not norm:
-            return
-        epg_index.setdefault(norm, {})
-        previous = epg_index[norm].get(provider_key)
-        if previous is None or entry.get('rank', 9999) < previous.get('rank', 9999):
-            epg_index[norm][provider_key] = entry
+        for candidate_value in _iter_epg_match_values(name_value):
+            norm = _normalize_epg_match_name(candidate_value)
+            if not norm:
+                continue
+            epg_index.setdefault(norm, {})
+            previous = epg_index[norm].get(provider_key)
+            if previous is None or entry.get('rank', 9999) < previous.get('rank', 9999):
+                epg_index[norm][provider_key] = entry
 
     context = ET.iterparse(raw_xml_path, events=('start', 'end'))
     for event, elem in context:
@@ -554,14 +578,16 @@ def _build_epg_tvh_cache(xml_path=None):
             continue
 
         search_keys = []
-        for value in [
+        candidate_values = [
             channel_name,
             getattr(row, 'sheet_channel_id', ''),
             getattr(row, 'sheet_group_name', ''),
-        ] + get_db_rule_candidate_values(channel_name):
-            norm = _normalize_epg_match_name(value)
-            if norm and norm not in search_keys:
-                search_keys.append(norm)
+        ] + get_db_rule_candidate_values(channel_name)
+        for value in candidate_values:
+            for candidate_value in _iter_epg_match_values(value):
+                norm = _normalize_epg_match_name(candidate_value)
+                if norm and norm not in search_keys:
+                    search_keys.append(norm)
 
         selected = None
         for provider_key in provider_order:
