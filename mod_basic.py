@@ -1763,11 +1763,17 @@ class ModuleBasic(PluginModuleBase):
                 )
 
             elif sub == 'epg_tivimate':
-                data = Task.build_epg_xml(target='tivimate')
-                if not data:
+                xml_path = _epg_cache_tvh_xml_path()
+                if _epg_tvh_cache_needs_rebuild():
+                    tvh_summary = _build_epg_tvh_cache(_epg_cache_xml_path())
+                    meta = _load_epg_meta()
+                    meta.update(tvh_summary)
+                    _save_epg_meta(meta)
+
+                if not os.path.exists(xml_path):
                     return Response('EPG cache not found', status=404, mimetype='text/plain')
                 return Response(
-                    data,
+                    _iter_file_chunks(xml_path),
                     mimetype='application/xml',
                     headers={'Content-Disposition': 'inline; filename=tivimate_epg.xml'}
                 )
