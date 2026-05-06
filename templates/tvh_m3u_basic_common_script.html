@@ -146,6 +146,35 @@ $(document).ready(function(){
   updateEpgProviderPriorityState();
 });
 
+function updateDliveEpgToggleState() {
+  var $input = $('#basic_epg_dlive_enabled');
+  var $btn = $('#basic_epg_dlive_toggle_btn');
+  var $text = $('#basic_epg_dlive_toggle_text');
+  if ($input.length === 0 || $btn.length === 0) return;
+
+  var enabled = String($input.val() || '').toLowerCase() === 'true';
+  $input.val(enabled ? 'True' : 'False');
+  $btn
+    .toggleClass('btn-primary', enabled)
+    .toggleClass('btn-outline-secondary', !enabled)
+    .text(enabled ? 'On' : 'Off');
+  if ($text.length) {
+    $text.text(enabled ? '지역채널 EPG를 함께 병합합니다.' : '지역채널 EPG 병합을 사용하지 않습니다.');
+  }
+}
+
+$(document).ready(function(){
+  updateDliveEpgToggleState();
+});
+
+$("body").on('click', '#basic_epg_dlive_toggle_btn', function(e){
+  e.preventDefault();
+  var $input = $('#basic_epg_dlive_enabled');
+  var enabled = String($input.val() || '').toLowerCase() === 'true';
+  $input.val(enabled ? 'False' : 'True');
+  updateDliveEpgToggleState();
+});
+
 $("body").on('click', '.epg-provider-toggle-btn', function(e){
   e.preventDefault();
   var $btn = $(this);

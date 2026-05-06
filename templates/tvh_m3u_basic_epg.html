@@ -45,11 +45,11 @@
       <div class="form-group row" style="margin-bottom:10px;">
         <label class="col-sm-3 col-form-label">딜라이브 지역채널 사용</label>
         <div class="col-sm-9">
-          <input type="hidden" name="basic_epg_dlive_enabled" value="False">
-          <label style="display:flex; align-items:center; gap:8px; margin-top:7px;">
-            <input type="checkbox" id="basic_epg_dlive_enabled" name="basic_epg_dlive_enabled" value="True" {% if arg.get('basic_epg_dlive_enabled') == 'True' %}checked{% endif %}>
-            <span>사용</span>
-          </label>
+          <input type="hidden" id="basic_epg_dlive_enabled" name="basic_epg_dlive_enabled" value="{{ 'True' if arg.get('basic_epg_dlive_enabled') == 'True' else 'False' }}">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:3px;">
+            <button type="button" id="basic_epg_dlive_toggle_btn" class="btn btn-sm"></button>
+            <span id="basic_epg_dlive_toggle_text" class="text-muted"></span>
+          </div>
           <small class="form-text text-muted">기본 EPG에 없는 지역채널 편성표를 추가로 병합합니다.</small>
         </div>
       </div>
