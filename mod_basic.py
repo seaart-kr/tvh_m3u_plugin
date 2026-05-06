@@ -486,6 +486,11 @@ def _build_epg_tvh_cache(xml_path=None):
         for row in provider_state.get('rows', [])
         if row.get('enabled') and row.get('key')
     ]
+    extra_provider_keys = ['']
+    provider_match_order = list(provider_order)
+    for key in extra_provider_keys:
+        if key not in provider_match_order:
+            provider_match_order.append(key)
     db_rules = {}
     try:
         db_rules = Task.load_db_rules()
@@ -592,7 +597,7 @@ def _build_epg_tvh_cache(xml_path=None):
     match_rows = []
 
     def find_fallback_candidate(search_keys):
-        for provider_key in provider_order:
+        for provider_key in provider_match_order:
             provider_entries = [
                 item for item in epg_entries
                 if item.get('provider') == provider_key
@@ -637,7 +642,7 @@ def _build_epg_tvh_cache(xml_path=None):
 
         selected = None
         match_rule = ''
-        for provider_key in provider_order:
+        for provider_key in provider_match_order:
             for search_key in search_keys:
                 candidate = epg_index.get(search_key, {}).get(provider_key)
                 if candidate is not None:
@@ -740,6 +745,7 @@ def _build_epg_tvh_cache(xml_path=None):
                 'matched_count': matched_count,
                 'unmatched_count': unmatched_count,
                 'provider_order': provider_order,
+                'provider_match_order': provider_match_order,
                 'rows': match_rows,
             }, f, ensure_ascii=False, indent=2)
     except Exception as e:
