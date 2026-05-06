@@ -40,6 +40,24 @@
 
     {{ macros.setting_input_text('basic_epg_xml_url', 'myepg XML 주소', value=arg.get('basic_epg_xml_url', ''), desc=['예: https://.../epg.xml', 'gzip(.gz) 주소도 자동 해제 시도']) }}
 
+    <div class="ff-fixed-box" style="margin-top:12px;">
+      <div style="font-weight:600; margin-bottom:8px;">지역채널 추가 EPG</div>
+      <div class="form-group row" style="margin-bottom:10px;">
+        <label class="col-sm-3 col-form-label">딜라이브 지역채널 사용</label>
+        <div class="col-sm-9">
+          <input type="hidden" name="basic_epg_dlive_enabled" value="False">
+          <label style="display:flex; align-items:center; gap:8px; margin-top:7px;">
+            <input type="checkbox" id="basic_epg_dlive_enabled" name="basic_epg_dlive_enabled" value="True" {% if arg.get('basic_epg_dlive_enabled') == 'True' %}checked{% endif %}>
+            <span>사용</span>
+          </label>
+          <small class="form-text text-muted">기본 EPG에 없는 지역채널 편성표를 추가로 병합합니다.</small>
+        </div>
+      </div>
+      {{ macros.setting_input_text('basic_epg_dlive_channel_name', '지역채널 표시명', value=arg.get('basic_epg_dlive_channel_name', '지역채널'), desc=['TVH 채널명과 같게 맞추는 것을 권장']) }}
+      {{ macros.setting_input_text('basic_epg_dlive_channel_id', '지역채널 XMLTV ID', value=arg.get('basic_epg_dlive_channel_id', 'DLIVE_SONGPA'), desc=['예: DLIVE_SONGPA']) }}
+      {{ macros.setting_input_text('basic_epg_dlive_schedule_url', '지역채널 편성표 주소', value=arg.get('basic_epg_dlive_schedule_url', ''), desc=['예: http://ch1.dlive.kr/?act=info.page&pcode=schedule&dt={date}', '{date} 위치에 날짜가 들어갑니다.']) }}
+    </div>
+
     <div class="form-group row">
       <label class="col-sm-3 col-form-label">EPG 자동 갱신 사용</label>
       <div class="col-sm-9">

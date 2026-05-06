@@ -21,6 +21,7 @@ from .setup import *
 from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, ModelChannelProfile, ModelLogoOverride, DB_PATH
 from .task import Task
 from .task_custom_logo import handle_custom_logo_upload, handle_custom_logo_mirror
+from .task_epg_extra import build_dlive_epg_xml_bytes, merge_xmltv_files, DEFAULT_DLIVE_SCHEDULE_URL, DEFAULT_DLIVE_SOURCE_NAME
 
 
 def _is_sync_form(req):
@@ -331,7 +332,7 @@ def _epg_cache_dir():
         for old_path in old_paths:
             if not os.path.isdir(old_path):
                 continue
-            for name in ['myepg_raw.xml', 'myepg_raw.meta.json', 'myepg_tvh.xml']:
+            for name in ['myepg_raw.xml', 'myepg_raw.meta.json', 'myepg_tvh.xml', 'myepg_tvh.match.json', 'dlive_extra.xml']:
                 src = os.path.join(old_path, name)
                 dst = os.path.join(path, name)
                 if os.path.exists(src) and not os.path.exists(dst):
@@ -339,6 +340,7 @@ def _epg_cache_dir():
     except Exception as e:
         logger.warning(f'[ff_tvh_m3u] migrate epg cache failed: {str(e)}')
     return path
+
 
 def _epg_cache_xml_path():
     return os.path.join(_epg_cache_dir(), 'myepg_raw.xml')
@@ -350,6 +352,10 @@ def _epg_cache_tvh_xml_path():
 
 def _epg_cache_match_json_path():
     return os.path.join(_epg_cache_dir(), 'myepg_tvh.match.json')
+
+
+def _epg_cache_dlive_xml_path():
+    return os.path.join(_epg_cache_dir(), 'dlive_extra.xml')
 
 
 def _epg_cache_meta_path():
@@ -877,6 +883,7 @@ def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
     cache_dir = _epg_cache_dir()
     tmp_download = os.path.join(cache_dir, 'myepg_download.tmp')
     tmp_xml = os.path.join(cache_dir, 'myepg_raw.tmp.xml')
+    tmp_merged = os.path.join(cache_dir, 'myepg_merged.tmp.xml')
     final_xml = _epg_cache_xml_path()
 
     with requests.get(url, stream=True, timeout=(10, timeout), verify=verify_ssl, headers={'User-Agent': 'ff_tvh_m3u/epg'}) as resp:
@@ -900,7 +907,34 @@ def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
     else:
         shutil.copyfile(tmp_download, tmp_xml)
 
-    os.replace(tmp_xml, final_xml)
+    extra_sources = []
+    if _is_epg_dlive_enabled():
+        dlive_channel_name = str(P.ModelSetting.get('basic_epg_dlive_channel_name') or '').strip() or '지역채널'
+        dlive_channel_id = str(P.ModelSetting.get('basic_epg_dlive_channel_id') or '').strip() or 'DLIVE_SONGPA'
+        dlive_schedule_url = str(P.ModelSetting.get('basic_epg_dlive_schedule_url') or '').strip() or DEFAULT_DLIVE_SCHEDULE_URL
+        dlive_xml = build_dlive_epg_xml_bytes(
+            channel_name=dlive_channel_name,
+            channel_id=dlive_channel_id,
+            url_template=dlive_schedule_url,
+            days=2,
+        )
+        with open(_epg_cache_dlive_xml_path(), 'wb') as fw:
+            fw.write(dlive_xml)
+        extra_sources.append({
+            'key': 'dlive',
+            'xml_bytes': dlive_xml,
+        })
+
+    if extra_sources:
+        merge_xmltv_files(tmp_xml, extra_sources, tmp_merged)
+        os.replace(tmp_merged, final_xml)
+        try:
+            os.remove(tmp_xml)
+        except Exception:
+            pass
+    else:
+        os.replace(tmp_xml, final_xml)
+
     try:
         os.remove(tmp_download)
     except Exception:
@@ -931,6 +965,7 @@ def _fetch_epg_and_build_meta(url, verify_ssl=True):
         'tvh_programme_count': tvh_summary.get('tvh_programme_count', 0),
         'tvh_provider_enabled': tvh_summary.get('tvh_provider_enabled', ''),
         'tvh_provider_priority': tvh_summary.get('tvh_provider_priority', ''),
+        'dlive_enabled': _is_epg_dlive_enabled(),
     }
     _save_epg_meta(meta)
     return meta
@@ -940,15 +975,21 @@ def _get_epg_status_payload():
     meta = _load_epg_meta()
     xml_path = _epg_cache_xml_path()
     exists = os.path.exists(xml_path)
+    tvh_xml_path = _epg_cache_tvh_xml_path()
+    tvh_exists = os.path.exists(tvh_xml_path)
     payload = {
         'ret': 'success' if exists else 'warning',
         'cache_exists': exists,
+        'tvh_cache_exists': tvh_exists,
         'fetched_at': meta.get('fetched_at', ''),
         'source_url': meta.get('source_url', ''),
         'file_size': meta.get('file_size', 0),
         'channel_count': meta.get('channel_count', 0),
         'programme_count': meta.get('programme_count', 0),
         'icon_count': meta.get('icon_count', 0),
+        'tvh_file_size': meta.get('tvh_file_size', os.path.getsize(tvh_xml_path) if tvh_exists else 0),
+        'tvh_channel_count': meta.get('tvh_channel_count', 0),
+        'tvh_programme_count': meta.get('tvh_programme_count', 0),
         'sample_channels': meta.get('sample_channels', []),
         'detected_provider_keys': meta.get('detected_provider_keys', []),
         'provider_rows': meta.get('provider_rows', []),
@@ -974,6 +1015,11 @@ def _normalize_epg_auto_time(value):
     except Exception:
         pass
     return '03:30'
+
+
+def _is_epg_dlive_enabled():
+    value = str(P.ModelSetting.get('basic_epg_dlive_enabled') or 'False').strip().lower()
+    return value in ['true', 'on', '1', 'yes', 'y']
 
 
 def _is_epg_auto_enabled():
@@ -1312,6 +1358,10 @@ class ModuleBasic(PluginModuleBase):
         'basic_epg_file_size': '0',
         'basic_epg_provider_priority': 'kt,lgu,sk,daum,naver,wavve,tving,spotv',
         'basic_epg_provider_enabled': 'kt,lgu,sk,daum,naver,wavve,tving,spotv',
+        'basic_epg_dlive_enabled': 'False',
+        'basic_epg_dlive_channel_name': '지역채널',
+        'basic_epg_dlive_channel_id': 'DLIVE_SONGPA',
+        'basic_epg_dlive_schedule_url': DEFAULT_DLIVE_SCHEDULE_URL,
         'basic_epg_auto_enabled': 'False',
         'basic_epg_auto_time': '03:30',
         'basic_epg_auto_last_run_date': '',
@@ -1391,6 +1441,14 @@ class ModuleBasic(PluginModuleBase):
             arg['basic_epg_file_size'] = P.ModelSetting.get('basic_epg_file_size') or str(epg_meta.get('file_size', 0))
             arg['epg_sample_channels'] = epg_meta.get('sample_channels', []) or []
             arg['epg_cache_exists'] = os.path.exists(_epg_cache_xml_path())
+            arg['basic_epg_dlive_enabled'] = (
+                'True'
+                if str(P.ModelSetting.get('basic_epg_dlive_enabled') or 'False').strip().lower() in ['true', 'on', '1', 'yes', 'y']
+                else 'False'
+            )
+            arg['basic_epg_dlive_channel_name'] = P.ModelSetting.get('basic_epg_dlive_channel_name') or '지역채널'
+            arg['basic_epg_dlive_channel_id'] = P.ModelSetting.get('basic_epg_dlive_channel_id') or 'DLIVE_SONGPA'
+            arg['basic_epg_dlive_schedule_url'] = P.ModelSetting.get('basic_epg_dlive_schedule_url') or DEFAULT_DLIVE_SCHEDULE_URL
             epg_provider_state = _build_epg_provider_rows(
                 P.ModelSetting.get('basic_epg_provider_enabled') or '',
                 P.ModelSetting.get('basic_epg_provider_priority') or '',
@@ -1683,45 +1741,19 @@ class ModuleBasic(PluginModuleBase):
                 )
 
             elif sub == 'epg_tvh':
-
-
                 xml_path = _epg_cache_tvh_xml_path()
-
-
                 if _epg_tvh_cache_needs_rebuild():
-
-
                     tvh_summary = _build_epg_tvh_cache(_epg_cache_xml_path())
-
-
                     meta = _load_epg_meta()
-
-
                     meta.update(tvh_summary)
-
-
                     _save_epg_meta(meta)
 
-
-
                 if not os.path.exists(xml_path):
-
-
                     return Response('EPG cache not found', status=404, mimetype='text/plain')
-
-
                 return Response(
-
-
                     _iter_file_chunks(xml_path),
-
-
                     mimetype='application/xml',
-
-
                     headers={'Content-Disposition': 'inline; filename=tvh_epg.xml'}
-
-
                 )
 
             elif sub == 'epg_tivimate':
