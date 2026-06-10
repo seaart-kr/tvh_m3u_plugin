@@ -379,6 +379,42 @@ def _iter_file_chunks(path, chunk_size=1024 * 256):
             yield chunk
 
 
+def _iter_epg_file_chunks(path, chunk_size=1024 * 256):
+    base_url = Task._get_request_base_url().rstrip('/')
+    if not base_url:
+        yield from _iter_file_chunks(path, chunk_size=chunk_size)
+        return
+
+    base = base_url.encode('utf-8')
+    replacements = (
+        (b'__FF_BASE_URL__', base),
+        (b'src="/customlogo/', b'src="' + base + b'/customlogo/'),
+        (b"src='/customlogo/", b"src='" + base + b'/customlogo/'),
+        (b'src="customlogo/', b'src="' + base + b'/customlogo/'),
+        (b"src='customlogo/", b"src='" + base + b'/customlogo/'),
+    )
+    keep_size = max(len(old) for old, _new in replacements) - 1
+    pending = b''
+
+    with open(path, 'rb') as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            pending += chunk
+            if len(pending) <= keep_size:
+                continue
+            for old, new in replacements:
+                pending = pending.replace(old, new)
+            emit, pending = pending[:-keep_size], pending[-keep_size:]
+            yield emit
+
+    for old, new in replacements:
+        pending = pending.replace(old, new)
+    if pending:
+        yield pending
+
+
 def _normalize_epg_match_name(value):
     text = str(value or '').strip().lower()
     return ''.join(ch for ch in text if ch.isalnum())
@@ -1738,10 +1774,8 @@ class ModuleBasic(PluginModuleBase):
                 xml_path = _epg_cache_xml_path()
                 if not os.path.exists(xml_path):
                     return Response('EPG cache not found', status=404, mimetype='text/plain')
-                with open(xml_path, 'rb') as f:
-                    data = f.read()
                 return Response(
-                    data,
+                    _iter_epg_file_chunks(xml_path),
                     mimetype='application/xml',
                     headers={'Content-Disposition': 'inline; filename=myepg_raw.xml'}
                 )
@@ -1757,7 +1791,7 @@ class ModuleBasic(PluginModuleBase):
                 if not os.path.exists(xml_path):
                     return Response('EPG cache not found', status=404, mimetype='text/plain')
                 return Response(
-                    _iter_file_chunks(xml_path),
+                    _iter_epg_file_chunks(xml_path),
                     mimetype='application/xml',
                     headers={'Content-Disposition': 'inline; filename=tvh_epg.xml'}
                 )
@@ -1773,7 +1807,7 @@ class ModuleBasic(PluginModuleBase):
                 if not os.path.exists(xml_path):
                     return Response('EPG cache not found', status=404, mimetype='text/plain')
                 return Response(
-                    _iter_file_chunks(xml_path),
+                    _iter_epg_file_chunks(xml_path),
                     mimetype='application/xml',
                     headers={'Content-Disposition': 'inline; filename=tivimate_epg.xml'}
                 )
