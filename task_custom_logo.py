@@ -4,17 +4,20 @@ import os
 import re
 import sqlite3
 from datetime import datetime
-from uuid import uuid4
 
 import requests
 
+from .custom_logo_image import LogoImageError, atomic_write, normalize_logo_image
 from .setup import P, logger
 from .task_m3u import TaskM3U
 
 WRITE_DB_PATH = '/data/db/ff_tvh_sheet_write.db'
-CUSTOM_LOGO_MAX_BYTES = 5 * 1024 * 1024
-CUSTOM_LOGO_ALLOWED_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']
 DEFAULT_MIRROR_URL = 'https://ff.aha3011.mywire.org/tvh_m3u_plugin/normal/custom_logo_mirror'
+DEFAULT_MIRROR_QUEUE_DIR = '/data/ff_tvh_m3u_logo_queue'
+DEFAULT_MIRROR_QUEUE_MAX_BYTES = 512 * 1024 * 1024
+DEFAULT_MIRROR_QUEUE_MAX_FILES = 5000
+DEFAULT_MIRROR_DAILY_LIMIT = 500
+DEFAULT_MIRROR_TOKEN_DAILY_LIMIT = 20
 
 
 def _now():
@@ -139,53 +142,106 @@ def _mirror_url():
     )
 
 
-def _sha1_bytes(data):
-    return hashlib.sha1(data or b'').hexdigest()
-
-
-def _make_filename(source_channel_name, original_filename):
-    source_channel_name = str(source_channel_name or '').strip()
-    original_filename = os.path.basename(str(original_filename or '').strip())
-    stem = re.sub(r'[^0-9A-Za-z가-힣]+', '_', source_channel_name).strip('_').lower()
-    if not stem:
-        stem = 'custom_logo'
-    ext = os.path.splitext(original_filename)[1].lower()
-    if ext not in CUSTOM_LOGO_ALLOWED_EXTS:
-        ext = '.png'
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    return f'{stem}_{timestamp}_{uuid4().hex[:8]}{ext}'
-
-
 def _asset_dir():
     path = TaskM3U.get_custom_logo_asset_dir()
     os.makedirs(path, exist_ok=True)
     return path
 
 
-def _save_file(file_storage, source_channel_name, requested_filename='', preserve_requested=False):
+def _mirror_queue_dir():
+    path = str(os.environ.get('TVH_M3U_LOGO_QUEUE_DIR') or DEFAULT_MIRROR_QUEUE_DIR).strip()
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _env_positive_int(name, default):
+    try:
+        value = int(str(os.environ.get(name) or default).strip())
+        return value if value > 0 else default
+    except Exception:
+        return default
+
+
+def _ensure_queue_capacity(output_dir, output_path, incoming_size):
+    if os.path.exists(output_path):
+        return
+    max_bytes = _env_positive_int('TVH_M3U_LOGO_QUEUE_MAX_BYTES', DEFAULT_MIRROR_QUEUE_MAX_BYTES)
+    max_files = _env_positive_int('TVH_M3U_LOGO_QUEUE_MAX_FILES', DEFAULT_MIRROR_QUEUE_MAX_FILES)
+    file_count = 0
+    total_bytes = 0
+    for entry in os.scandir(output_dir):
+        try:
+            if entry.is_file(follow_symlinks=False) and entry.name.endswith('.png'):
+                file_count += 1
+                total_bytes += entry.stat(follow_symlinks=False).st_size
+        except OSError:
+            continue
+    if file_count >= max_files or total_bytes + incoming_size > max_bytes:
+        raise Exception('원격 로고 대기열이 가득 찼습니다. 다음 자동 게시 후 다시 시도하세요.')
+
+
+def _check_mirror_rate_limit(source_apikey):
+    daily_limit = _env_positive_int('TVH_M3U_LOGO_MIRROR_DAILY_LIMIT', DEFAULT_MIRROR_DAILY_LIMIT)
+    token_limit = _env_positive_int(
+        'TVH_M3U_LOGO_MIRROR_TOKEN_DAILY_LIMIT',
+        DEFAULT_MIRROR_TOKEN_DAILY_LIMIT,
+    )
+    day = datetime.now().strftime('%Y-%m-%d')
+    token_hash = hashlib.sha256(str(source_apikey).encode('utf-8')).hexdigest()
+    con = _connect_write_db()
+    try:
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS custom_logo_upload_rate (
+            upload_day TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
+            upload_count INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (upload_day, token_hash)
+        )
+        """)
+        con.execute('DELETE FROM custom_logo_upload_rate WHERE upload_day <> ?', (day,))
+        global_count = int(con.execute(
+            'SELECT COALESCE(SUM(upload_count), 0) FROM custom_logo_upload_rate WHERE upload_day = ?',
+            (day,),
+        ).fetchone()[0])
+        row = con.execute(
+            'SELECT upload_count FROM custom_logo_upload_rate WHERE upload_day = ? AND token_hash = ?',
+            (day, token_hash),
+        ).fetchone()
+        token_count = int(row[0]) if row else 0
+        if global_count >= daily_limit or token_count >= token_limit:
+            raise Exception('원격 로고의 일일 업로드 한도를 초과했습니다.')
+        con.execute("""
+        INSERT INTO custom_logo_upload_rate (upload_day, token_hash, upload_count)
+        VALUES (?, ?, 1)
+        ON CONFLICT(upload_day, token_hash)
+        DO UPDATE SET upload_count = upload_count + 1
+        """, (day, token_hash))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _save_file(file_storage, output_dir=None, enforce_queue_limits=False):
     if file_storage is None:
         raise Exception('업로드할 로고 파일이 없습니다.')
-    original_filename = requested_filename or getattr(file_storage, 'filename', '') or ''
+    try:
+        normalized = normalize_logo_image(file_storage.read())
+    except LogoImageError as e:
+        raise Exception(str(e))
 
-    if preserve_requested and requested_filename:
-        stored_filename = os.path.basename(str(requested_filename or '').strip())
-        if not stored_filename:
-            raise Exception('저장할 로고 파일명이 비어 있습니다.')
-    else:
-        stored_filename = _make_filename(source_channel_name, original_filename)
-
-    ext = os.path.splitext(stored_filename)[1].lower()
-    if ext not in CUSTOM_LOGO_ALLOWED_EXTS:
-        raise Exception('지원하지 않는 이미지 확장자입니다.')
-    data = file_storage.read()
-    if not data:
-        raise Exception('업로드한 파일이 비어 있습니다.')
-    if len(data) > CUSTOM_LOGO_MAX_BYTES:
-        raise Exception('로고 파일은 5MB 이하만 업로드할 수 있습니다.')
-    output_path = os.path.join(_asset_dir(), stored_filename)
-    with open(output_path, 'wb') as f:
-        f.write(data)
-    return {'stored_filename': stored_filename, 'output_path': output_path, 'sha1': _sha1_bytes(data), 'file_size': len(data)}
+    stored_filename = normalized['filename']
+    target_dir = output_dir or _asset_dir()
+    output_path = os.path.join(target_dir, stored_filename)
+    if enforce_queue_limits:
+        _ensure_queue_capacity(target_dir, output_path, normalized['file_size'])
+    atomic_write(output_path, normalized['data'])
+    return {
+        'stored_filename': stored_filename,
+        'output_path': output_path,
+        'sha1': normalized['sha1'],
+        'sha256': normalized['sha256'],
+        'file_size': normalized['file_size'],
+    }
 
 
 def _ensure_custom_logo_table(cur):
@@ -289,7 +345,7 @@ def handle_custom_logo_upload(req):
     if not _is_valid_source_ff_apikey(source_apikey):
         return {'ret': 'warning', 'msg': 'FF apikey 설정이 필요합니다. 시스템 설정에서 apikey를 설정한 뒤 다시 업로드하세요.'}
 
-    saved = _save_file(logo_file, source_channel_name)
+    saved = _save_file(logo_file)
     db_info = _save_db(source_channel_name, standard_name, aka_name, saved['stored_filename'], saved['sha1'], saved['file_size'])
     mirror = _mirror_to_owner(source_channel_name, db_info.get('standard_name') or standard_name or source_channel_name, aka_name, saved['output_path'], saved['stored_filename'], saved['sha1'], saved['file_size'], source_apikey)
     msg = '커스텀 로고를 업로드했습니다.'
@@ -316,10 +372,19 @@ def handle_custom_logo_mirror(req):
     standard_name = str(req.form.get('standard_name') or '').strip()
     aka_name = str(req.form.get('aka_name') or '').strip()
     logo_file = req.files.get('logo_file')
-    requested_filename = str(req.form.get('stored_filename') or '').strip()
     if not source_channel_name:
         return {'ret': 'warning', 'msg': '원본 채널명이 비어 있습니다.'}
-    saved = _save_file(logo_file, source_channel_name, requested_filename=requested_filename, preserve_requested=True)
+    if logo_file is None:
+        return {'ret': 'warning', 'msg': '업로드할 로고 파일이 없습니다.'}
+    try:
+        _check_mirror_rate_limit(received)
+    except Exception as e:
+        return {'ret': 'warning', 'msg': str(e)}
+    saved = _save_file(
+        logo_file,
+        output_dir=_mirror_queue_dir(),
+        enforce_queue_limits=True,
+    )
     db_info = _save_db(source_channel_name, standard_name, aka_name, saved['stored_filename'], saved['sha1'], saved['file_size'])
     return {
         'ret': 'success',
