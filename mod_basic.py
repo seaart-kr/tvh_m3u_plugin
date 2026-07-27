@@ -57,7 +57,14 @@ def _save_runtime_settings(req):
         if req is None or not getattr(req, 'form', None):
             return result
         result['is_sync_form'] = _is_sync_form(req)
+        secret_keys = ['basic_tvh_admin_password', 'basic_tvh_play_password']
+        preserved_secrets = {}
+        for key in secret_keys:
+            if key in req.form and not str(req.form.get(key) or ''):
+                preserved_secrets[key] = P.ModelSetting.get(key) or ''
         P.ModelSetting.setting_save(req)
+        for key, value in preserved_secrets.items():
+            P.ModelSetting.set(key, value)
         result['saved'] = True
     except Exception as e:
         logger.warning(f'[ff_tvh_m3u] runtime setting_save skipped: {str(e)}')
@@ -213,6 +220,30 @@ LOGO_PRIORITY_OPTIONS = [
     ('sk', 'SK'),
 ]
 LOGO_PRIORITY_LABEL_MAP = {item[0]: item[1] for item in LOGO_PRIORITY_OPTIONS}
+
+EPG_DEFAULT_MAX_DOWNLOAD_BYTES = 256 * 1024 * 1024
+EPG_DEFAULT_MAX_XML_BYTES = 1024 * 1024 * 1024
+
+
+def _positive_env_int(name, default):
+    try:
+        value = int(str(os.environ.get(name) or default).strip())
+        return value if value > 0 else default
+    except Exception:
+        return default
+
+
+def _copy_limited(source, destination, max_bytes):
+    written = 0
+    while True:
+        chunk = source.read(1024 * 1024)
+        if not chunk:
+            break
+        written += len(chunk)
+        if written > max_bytes:
+            raise ValueError(f'EPG XML size limit exceeded ({max_bytes} bytes)')
+        destination.write(chunk)
+    return written
 
 
 def _parse_logo_priority_csv(text_value):
@@ -1018,13 +1049,33 @@ def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
     tmp_xml = _epg_temp_path(cache_dir, '.raw.tmp.xml')
     tmp_merged = _epg_temp_path(cache_dir, '.merged.tmp.xml')
     final_xml = _epg_cache_xml_path()
+    max_download_bytes = _positive_env_int(
+        'TVH_M3U_EPG_MAX_DOWNLOAD_BYTES',
+        EPG_DEFAULT_MAX_DOWNLOAD_BYTES,
+    )
+    max_xml_bytes = _positive_env_int(
+        'TVH_M3U_EPG_MAX_XML_BYTES',
+        EPG_DEFAULT_MAX_XML_BYTES,
+    )
 
     try:
         with requests.get(url, stream=True, timeout=(10, timeout), verify=verify_ssl, headers={'User-Agent': 'ff_tvh_m3u/epg'}) as resp:
             resp.raise_for_status()
+            content_length = str(resp.headers.get('Content-Length') or '').strip()
+            if content_length:
+                try:
+                    if int(content_length) > max_download_bytes:
+                        raise ValueError(f'EPG download size limit exceeded ({max_download_bytes} bytes)')
+                except ValueError as e:
+                    if 'size limit exceeded' in str(e):
+                        raise
             with open(tmp_download, 'wb') as fw:
+                downloaded = 0
                 for chunk in resp.iter_content(chunk_size=1024 * 128):
                     if chunk:
+                        downloaded += len(chunk)
+                        if downloaded > max_download_bytes:
+                            raise ValueError(f'EPG download size limit exceeded ({max_download_bytes} bytes)')
                         fw.write(chunk)
 
         is_gzip = False
@@ -1037,8 +1088,10 @@ def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
 
         if is_gzip or str(url).lower().endswith('.gz'):
             with gzip.open(tmp_download, 'rb') as fr, open(tmp_xml, 'wb') as fw:
-                shutil.copyfileobj(fr, fw)
+                _copy_limited(fr, fw, max_xml_bytes)
         else:
+            if os.path.getsize(tmp_download) > max_xml_bytes:
+                raise ValueError(f'EPG XML size limit exceeded ({max_xml_bytes} bytes)')
             shutil.copyfile(tmp_download, tmp_xml)
 
         extra_sources = []
@@ -1490,7 +1543,7 @@ class ModuleBasic(PluginModuleBase):
         'basic_tvh_play_password': '',
         'basic_tvh_stream_profile': '',
         'basic_tvh_include_auth_in_url': 'False',
-        'basic_tvh_use_verify_ssl': 'False',
+        'basic_tvh_use_verify_ssl': 'True',
         'basic_last_sync_time': '',
         'basic_last_sync_count': '0',
         'basic_match_last_run_time': '',
@@ -1548,6 +1601,9 @@ class ModuleBasic(PluginModuleBase):
             logger.debug(f'[ff_tvh_m3u] dedicated db path = {DB_PATH}')
 
             arg = P.ModelSetting.to_dict()
+            # Never render stored TVH passwords back into the browser.
+            arg['basic_tvh_admin_password'] = ''
+            arg['basic_tvh_play_password'] = ''
             arg['package_name'] = P.package_name
             arg['page_sub'] = sub
             arg['ajax_sub'] = self.name

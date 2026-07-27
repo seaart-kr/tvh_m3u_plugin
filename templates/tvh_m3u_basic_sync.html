@@ -11,7 +11,13 @@
 
     <h5>관리자 계정</h5>
     {{ macros.setting_input_text('basic_tvh_admin_username', '관리자 ID', value=arg['basic_tvh_admin_username'], desc=['채널/태그 불러오기 및 TVH API 접속용']) }}
-    {{ macros.setting_input_text('basic_tvh_admin_password', '관리자 비밀번호', value=arg['basic_tvh_admin_password']) }}
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">관리자 비밀번호</label>
+      <div class="col-sm-9">
+        <input type="password" class="form-control" id="basic_tvh_admin_password" name="basic_tvh_admin_password" value="" autocomplete="new-password" placeholder="변경할 때만 입력">
+        <small class="form-text text-muted">비워두면 저장된 비밀번호를 유지합니다.</small>
+      </div>
+    </div>
 
     <div class="ff-action-btn-row">
       <button type="button" class="btn btn-primary" id="test_admin_login_btn">관리자 로그인 확인</button>
