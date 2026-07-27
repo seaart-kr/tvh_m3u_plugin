@@ -1711,16 +1711,16 @@ class ModuleBasic(PluginModuleBase):
 
 
             elif sub == 'logo_preview_select':
-                return jsonify({
-                    'ret': 'warning',
-                    'msg': '로고 선택 저장 기능은 아직 지원하지 않습니다.',
-                })
+                return jsonify(Task.save_logo_override(
+                    channel_uuid=request.form.get('channel_uuid', ''),
+                    provider=request.form.get('provider', ''),
+                    url_template=request.form.get('url_template', ''),
+                ))
 
             elif sub == 'logo_preview_clear':
-                return jsonify({
-                    'ret': 'warning',
-                    'msg': '로고 선택 초기화 기능은 아직 지원하지 않습니다.',
-                })
+                return jsonify(Task.clear_logo_override(
+                    channel_uuid=request.form.get('channel_uuid', ''),
+                ))
 
             elif sub == 'upload_custom_logo':
                 return jsonify(handle_custom_logo_upload(req))

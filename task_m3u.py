@@ -1056,8 +1056,11 @@ class TaskM3U(TaskBase):
             'provider_id_map': {},
         }
 
+        # Keep the shared provider logos available even after the local write DB
+        # is created. Local rows loaded below can still replace matching entries.
+        TaskM3U._load_remote_logo_cache(new_cache)
+
         if not os.path.exists(TaskM3U.WRITE_DB_PATH):
-            TaskM3U._load_remote_logo_cache(new_cache)
             TaskM3U._logo_cache = new_cache
             return new_cache
 
