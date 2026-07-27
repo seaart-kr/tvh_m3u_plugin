@@ -11,6 +11,7 @@ import json
 import gzip
 import shutil
 import tempfile
+import errno
 from contextlib import contextmanager
 from datetime import datetime
 import xml.etree.ElementTree as ET
@@ -401,6 +402,49 @@ def _epg_fetch_lock():
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
             finally:
                 lock_file.close()
+
+
+@contextmanager
+def _epg_auto_scheduler_leader_lock():
+    """Elect exactly one scheduler leader across web worker processes."""
+    lock_path = os.path.join(_epg_cache_dir(), '.epg_auto_scheduler.lock')
+    lock_file = open(lock_path, 'a+b')
+    acquired = False
+    try:
+        try:
+            if os.name == 'nt':
+                import msvcrt
+
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b'\0')
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except OSError as e:
+            if e.errno not in [errno.EACCES, errno.EAGAIN]:
+                raise
+
+        yield acquired
+    finally:
+        try:
+            if acquired:
+                lock_file.seek(0)
+                if os.name == 'nt':
+                    import msvcrt
+
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
 
 
 def _epg_temp_path(cache_dir, suffix):
@@ -1139,7 +1183,7 @@ def _run_epg_fetch_from_settings(trigger='manual'):
     return meta
 
 
-def _epg_auto_scheduler_loop():
+def _epg_auto_scheduler_leader_loop():
     while True:
         try:
             if _is_epg_auto_enabled():
@@ -1162,6 +1206,23 @@ def _epg_auto_scheduler_loop():
         time.sleep(30)
 
 
+def _epg_auto_scheduler_loop():
+    standby_logged = False
+    while True:
+        try:
+            with _epg_auto_scheduler_leader_lock() as is_leader:
+                if is_leader:
+                    logger.info('[ff_tvh_m3u] epg auto scheduler started (leader)')
+                    _epg_auto_scheduler_leader_loop()
+                elif not standby_logged:
+                    logger.info('[ff_tvh_m3u] epg auto scheduler standby (another process is leader)')
+                    standby_logged = True
+        except Exception as e:
+            logger.exception(f'[ff_tvh_m3u] epg auto scheduler leader election failed: {str(e)}')
+
+        time.sleep(30)
+
+
 def _ensure_epg_auto_scheduler_started():
     global _EPG_AUTO_THREAD_STARTED
     if _EPG_AUTO_THREAD_STARTED:
@@ -1174,7 +1235,6 @@ def _ensure_epg_auto_scheduler_started():
         thread = threading.Thread(target=_epg_auto_scheduler_loop, name='ff_tvh_m3u_epg_auto', daemon=True)
         thread.start()
         _EPG_AUTO_THREAD_STARTED = True
-        logger.info('[ff_tvh_m3u] epg auto scheduler started')
 
 
 CUSTOM_LOGO_MAX_BYTES = 5 * 1024 * 1024
