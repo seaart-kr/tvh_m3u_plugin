@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
+import os
+
 import requests
 
 
 class TaskRemoteBackend(object):
     BASE_URL = 'https://ff.aha3011.mywire.org/ff_tvh_sheet_write/api/basic'
-    APIKEY = 'TLP1TOGA4P'
+    # This key is distributed with the public plugin and must be read-only on
+    # the backend. A private deployment can override it without changing code.
+    PUBLIC_READ_APIKEY = 'TLP1TOGA4P'
+    APIKEY = str(os.environ.get('TVH_M3U_REMOTE_APIKEY') or PUBLIC_READ_APIKEY).strip()
     VERIFY_SSL = True
     TIMEOUT = 20
 
@@ -39,14 +44,6 @@ class TaskRemoteBackend(object):
     @staticmethod
     def get_aliases(channel_id):
         return TaskRemoteBackend._request('get_aliases', {'channel_id': channel_id})
-
-    @staticmethod
-    def add_alias(channel_id, alias_name):
-        return TaskRemoteBackend._request('add_alias', {'channel_id': channel_id, 'alias_name': alias_name})
-
-    @staticmethod
-    def add_alias_bulk(channel_id, alias_names):
-        return TaskRemoteBackend._request('add_alias_bulk', {'channel_id': channel_id, 'alias_names': alias_names})
 
     @staticmethod
     def _build_rules_from_dump(payload):
