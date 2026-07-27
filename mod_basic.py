@@ -10,6 +10,8 @@ import datetime as _epg_auto_dt
 import json
 import gzip
 import shutil
+import tempfile
+from contextlib import contextmanager
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
@@ -362,6 +364,51 @@ def _epg_cache_meta_path():
     return os.path.join(_epg_cache_dir(), 'myepg_raw.meta.json')
 
 
+_EPG_FETCH_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _epg_fetch_lock():
+    """Serialize EPG refreshes across threads and web worker processes."""
+    lock_path = os.path.join(_epg_cache_dir(), '.epg_fetch.lock')
+    with _EPG_FETCH_THREAD_LOCK:
+        lock_file = open(lock_path, 'a+b')
+        try:
+            if os.name == 'nt':
+                import msvcrt
+
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b'\0')
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                lock_file.seek(0)
+                if os.name == 'nt':
+                    import msvcrt
+
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            finally:
+                lock_file.close()
+
+
+def _epg_temp_path(cache_dir, suffix):
+    fd, path = tempfile.mkstemp(prefix='.myepg_', suffix=suffix, dir=cache_dir)
+    os.close(fd)
+    return path
+
+
 def _epg_now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -512,7 +559,7 @@ def _build_epg_tvh_cache(xml_path=None):
         }
 
     cache_dir = _epg_cache_dir()
-    tmp_path = os.path.join(cache_dir, 'myepg_tvh.tmp.xml')
+    tmp_path = _epg_temp_path(cache_dir, '.tvh.tmp.xml')
     final_path = _epg_cache_tvh_xml_path()
     enabled_set = _get_epg_enabled_provider_set()
     rank_map = _get_epg_provider_rank_map()
@@ -923,94 +970,94 @@ def _summarize_epg_xml(xml_path, sample_limit=None):
 
 def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
     cache_dir = _epg_cache_dir()
-    tmp_download = os.path.join(cache_dir, 'myepg_download.tmp')
-    tmp_xml = os.path.join(cache_dir, 'myepg_raw.tmp.xml')
-    tmp_merged = os.path.join(cache_dir, 'myepg_merged.tmp.xml')
+    tmp_download = _epg_temp_path(cache_dir, '.download.tmp')
+    tmp_xml = _epg_temp_path(cache_dir, '.raw.tmp.xml')
+    tmp_merged = _epg_temp_path(cache_dir, '.merged.tmp.xml')
     final_xml = _epg_cache_xml_path()
 
-    with requests.get(url, stream=True, timeout=(10, timeout), verify=verify_ssl, headers={'User-Agent': 'ff_tvh_m3u/epg'}) as resp:
-        resp.raise_for_status()
-        with open(tmp_download, 'wb') as fw:
-            for chunk in resp.iter_content(chunk_size=1024 * 128):
-                if chunk:
-                    fw.write(chunk)
-
-    is_gzip = False
     try:
-        with open(tmp_download, 'rb') as fr:
-            head = fr.read(2)
-            is_gzip = head == b'\x1f\x8b'
-    except Exception:
+        with requests.get(url, stream=True, timeout=(10, timeout), verify=verify_ssl, headers={'User-Agent': 'ff_tvh_m3u/epg'}) as resp:
+            resp.raise_for_status()
+            with open(tmp_download, 'wb') as fw:
+                for chunk in resp.iter_content(chunk_size=1024 * 128):
+                    if chunk:
+                        fw.write(chunk)
+
         is_gzip = False
-
-    if is_gzip or str(url).lower().endswith('.gz'):
-        with gzip.open(tmp_download, 'rb') as fr, open(tmp_xml, 'wb') as fw:
-            shutil.copyfileobj(fr, fw)
-    else:
-        shutil.copyfile(tmp_download, tmp_xml)
-
-    extra_sources = []
-    if _is_epg_dlive_enabled():
-        dlive_channel_name = str(P.ModelSetting.get('basic_epg_dlive_channel_name') or '').strip() or '지역채널'
-        dlive_channel_id = str(P.ModelSetting.get('basic_epg_dlive_channel_id') or '').strip() or 'DLIVE_SONGPA'
-        dlive_schedule_url = str(P.ModelSetting.get('basic_epg_dlive_schedule_url') or '').strip() or DEFAULT_DLIVE_SCHEDULE_URL
-        dlive_xml = build_dlive_epg_xml_bytes(
-            channel_name=dlive_channel_name,
-            channel_id=dlive_channel_id,
-            url_template=dlive_schedule_url,
-            days=2,
-        )
-        with open(_epg_cache_dlive_xml_path(), 'wb') as fw:
-            fw.write(dlive_xml)
-        extra_sources.append({
-            'key': 'dlive',
-            'xml_bytes': dlive_xml,
-        })
-
-    if extra_sources:
-        merge_xmltv_files(tmp_xml, extra_sources, tmp_merged)
-        os.replace(tmp_merged, final_xml)
         try:
-            os.remove(tmp_xml)
+            with open(tmp_download, 'rb') as fr:
+                head = fr.read(2)
+                is_gzip = head == b'\x1f\x8b'
         except Exception:
-            pass
-    else:
-        os.replace(tmp_xml, final_xml)
+            is_gzip = False
 
-    try:
-        os.remove(tmp_download)
-    except Exception:
-        pass
-    return final_xml
+        if is_gzip or str(url).lower().endswith('.gz'):
+            with gzip.open(tmp_download, 'rb') as fr, open(tmp_xml, 'wb') as fw:
+                shutil.copyfileobj(fr, fw)
+        else:
+            shutil.copyfile(tmp_download, tmp_xml)
+
+        extra_sources = []
+        if _is_epg_dlive_enabled():
+            dlive_channel_name = str(P.ModelSetting.get('basic_epg_dlive_channel_name') or '').strip() or '지역채널'
+            dlive_channel_id = str(P.ModelSetting.get('basic_epg_dlive_channel_id') or '').strip() or 'DLIVE_SONGPA'
+            dlive_schedule_url = str(P.ModelSetting.get('basic_epg_dlive_schedule_url') or '').strip() or DEFAULT_DLIVE_SCHEDULE_URL
+            dlive_xml = build_dlive_epg_xml_bytes(
+                channel_name=dlive_channel_name,
+                channel_id=dlive_channel_id,
+                url_template=dlive_schedule_url,
+                days=2,
+            )
+            with open(_epg_cache_dlive_xml_path(), 'wb') as fw:
+                fw.write(dlive_xml)
+            extra_sources.append({
+                'key': 'dlive',
+                'xml_bytes': dlive_xml,
+            })
+
+        if extra_sources:
+            merge_xmltv_files(tmp_xml, extra_sources, tmp_merged)
+            os.replace(tmp_merged, final_xml)
+        else:
+            os.replace(tmp_xml, final_xml)
+        return final_xml
+    finally:
+        for tmp_path in [tmp_download, tmp_xml, tmp_merged]:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 def _fetch_epg_and_build_meta(url, verify_ssl=True):
-    xml_path = _prepare_epg_xml_from_url(url, verify_ssl=verify_ssl)
-    summary = _summarize_epg_xml(xml_path)
-    tvh_summary = _build_epg_tvh_cache(xml_path)
-    meta = {
-        'ret': 'success',
-        'fetched_at': _epg_now(),
-        'source_url': url,
-        'cache_exists': summary.get('exists', False),
-        'file_size': summary.get('file_size', 0),
-        'channel_count': summary.get('channel_count', 0),
-        'programme_count': summary.get('programme_count', 0),
-        'icon_count': summary.get('icon_count', 0),
-        'sample_channels': summary.get('sample_channels', []),
-        'detected_provider_keys': summary.get('detected_provider_keys', []),
-        'provider_rows': summary.get('provider_rows', []),
-        'provider_mode': summary.get('provider_mode', 'unknown'),
-        'tvh_cache_exists': tvh_summary.get('tvh_cache_exists', False),
-        'tvh_file_size': tvh_summary.get('tvh_file_size', 0),
-        'tvh_channel_count': tvh_summary.get('tvh_channel_count', 0),
-        'tvh_programme_count': tvh_summary.get('tvh_programme_count', 0),
-        'tvh_provider_enabled': tvh_summary.get('tvh_provider_enabled', ''),
-        'tvh_provider_priority': tvh_summary.get('tvh_provider_priority', ''),
-        'dlive_enabled': _is_epg_dlive_enabled(),
-    }
-    _save_epg_meta(meta)
-    return meta
+    with _epg_fetch_lock():
+        xml_path = _prepare_epg_xml_from_url(url, verify_ssl=verify_ssl)
+        summary = _summarize_epg_xml(xml_path)
+        tvh_summary = _build_epg_tvh_cache(xml_path)
+        meta = {
+            'ret': 'success',
+            'fetched_at': _epg_now(),
+            'source_url': url,
+            'cache_exists': summary.get('exists', False),
+            'file_size': summary.get('file_size', 0),
+            'channel_count': summary.get('channel_count', 0),
+            'programme_count': summary.get('programme_count', 0),
+            'icon_count': summary.get('icon_count', 0),
+            'sample_channels': summary.get('sample_channels', []),
+            'detected_provider_keys': summary.get('detected_provider_keys', []),
+            'provider_rows': summary.get('provider_rows', []),
+            'provider_mode': summary.get('provider_mode', 'unknown'),
+            'tvh_cache_exists': tvh_summary.get('tvh_cache_exists', False),
+            'tvh_file_size': tvh_summary.get('tvh_file_size', 0),
+            'tvh_channel_count': tvh_summary.get('tvh_channel_count', 0),
+            'tvh_programme_count': tvh_summary.get('tvh_programme_count', 0),
+            'tvh_provider_enabled': tvh_summary.get('tvh_provider_enabled', ''),
+            'tvh_provider_priority': tvh_summary.get('tvh_provider_priority', ''),
+            'dlive_enabled': _is_epg_dlive_enabled(),
+        }
+        _save_epg_meta(meta)
+        return meta
 
 
 def _get_epg_status_payload():
