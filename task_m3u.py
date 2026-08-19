@@ -4,7 +4,7 @@ import re
 import sqlite3
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 from .setup import P, logger
@@ -86,7 +86,7 @@ class TaskM3U(TaskBase):
             return {}
 
     @staticmethod
-    def normalize_stream_url(source_url, profile=''):
+    def normalize_stream_url(source_url, profile='', include_auth=None):
         """
         TVH 원본 playlist URL의 path/query는 유지하고,
         호스트/포트/스킴은 플러그인 설정의 TVH 스트림 주소를 기준으로 강제한다.
@@ -110,7 +110,10 @@ class TaskM3U(TaskBase):
             source_parts.fragment
         ))
 
-        if TaskM3U.get_include_auth_in_url():
+        if include_auth is None:
+            include_auth = TaskM3U.get_include_auth_in_url()
+
+        if include_auth:
             username = TaskM3U.get_play_username()
             password = TaskM3U.get_play_password()
             url = TaskM3U.remove_auth_from_url(url)
@@ -124,6 +127,50 @@ class TaskM3U(TaskBase):
             url = TaskM3U.set_query_param(url, 'profile', '')
 
         return url
+
+    @staticmethod
+    def build_alive_stream_url(base_url, api_key, channel_uuid):
+        base_url = str(base_url or '').rstrip('/')
+        channel_uuid = str(channel_uuid or '').strip()
+        query = [
+            ('m', 'url'),
+            ('s', 'tvh'),
+            ('i', channel_uuid),
+        ]
+        if api_key:
+            query.append(('apikey', str(api_key).strip()))
+        return f'{base_url}/{P.package_name}/api/url.m3u8?{urlencode(query)}'
+
+    @staticmethod
+    def resolve_alive_stream(channel_uuid):
+        channel_uuid = str(channel_uuid or '').strip()
+        if not channel_uuid or len(channel_uuid) > 128:
+            return {'ret': 'warning', 'status': 400, 'msg': 'invalid channel'}
+
+        channel = ModelChannel.get_channel_map().get(channel_uuid)
+        if channel is None or not bool(channel.enabled):
+            return {'ret': 'warning', 'status': 404, 'msg': 'channel not found'}
+
+        source_url = TaskM3U.fetch_playlist_map().get(channel_uuid, '')
+        if not source_url:
+            return {'ret': 'warning', 'status': 404, 'msg': 'stream not found'}
+
+        group_name = channel.get_effective_group_name()
+        profile = TaskM3U.get_effective_profile(channel_uuid, group_name)
+        upstream_url = TaskM3U.normalize_stream_url(
+            source_url,
+            profile,
+            include_auth=False,
+        )
+        if not upstream_url:
+            return {'ret': 'warning', 'status': 503, 'msg': 'stream unavailable'}
+
+        return {
+            'ret': 'success',
+            'channel_uuid': channel_uuid,
+            'channel_name': str(channel.name or '').strip(),
+            'upstream_url': upstream_url,
+        }
 
     @staticmethod
     def get_effective_profile(channel_uuid='', group_name=''):
@@ -1579,16 +1626,16 @@ class TaskM3U(TaskBase):
             f'group-title="{group_name}"',
         ]
 
-        if target == 'tivimate' and logo_url:
+        if target in ['tivimate', 'alive'] and logo_url:
             attrs.append(f'tvg-logo="{logo_url}"')
 
         return f'#EXTINF:-1 {" ".join(attrs)},{tvg_name_text}'
 
     @staticmethod
-    def build_m3u(target='tivimate'):
+    def build_m3u(target='tivimate', proxy_base_url='', proxy_apikey=''):
         try:
             target = str(target or 'tivimate').strip().lower()
-            if target not in ['tvh', 'tivimate']:
+            if target not in ['tvh', 'tivimate', 'alive']:
                 target = 'tivimate'
 
             logger.info(f'[ff_tvh_m3u] build_m3u start target={target}')
@@ -1633,8 +1680,15 @@ class TaskM3U(TaskBase):
                         skipped_no_playlist += 1
                         continue
 
-                    effective_profile = TaskM3U.get_effective_profile(channel_uuid, group_name)
-                    stream_url = TaskM3U.normalize_stream_url(source_url, effective_profile)
+                    if target == 'alive':
+                        stream_url = TaskM3U.build_alive_stream_url(
+                            proxy_base_url,
+                            proxy_apikey,
+                            channel_uuid,
+                        )
+                    else:
+                        effective_profile = TaskM3U.get_effective_profile(channel_uuid, group_name)
+                        stream_url = TaskM3U.normalize_stream_url(source_url, effective_profile)
                     if not stream_url:
                         skipped_empty_url += 1
                         continue
@@ -1720,6 +1774,8 @@ class TaskM3U(TaskBase):
             target = str(target or 'tivimate').strip().lower()
             if target == 'tvh':
                 return f'{base_url}/{P.package_name}/api/m3u_tvh'
+            if target == 'alive':
+                return f'{base_url}/{P.package_name}/api/m3u_alive'
             if target == 'tivimate':
                 return f'{base_url}/{P.package_name}/api/m3u_tivimate'
             return f'{base_url}/{P.package_name}/api/m3u'
@@ -1727,6 +1783,8 @@ class TaskM3U(TaskBase):
             logger.exception(f'[ff_tvh_m3u] get_m3u_url exception: {str(e)}')
             if str(target or '').strip().lower() == 'tvh':
                 return f'/{P.package_name}/api/m3u_tvh'
+            if str(target or '').strip().lower() == 'alive':
+                return f'/{P.package_name}/api/m3u_alive'
             if str(target or '').strip().lower() == 'tivimate':
                 return f'/{P.package_name}/api/m3u_tivimate'
             return f'/{P.package_name}/api/m3u'
