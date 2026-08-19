@@ -36,6 +36,20 @@
           <a href="{{ arg['m3u_shyni_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_shyni_url'] }}</a>
         </div>
         <small class="form-text text-muted">ALIVE 호환 형식으로 생성하며 TVH 계정을 노출하지 않고 이 서버가 실시간으로 중계하는 Shyni 전용 링크</small>
+        <div class="mt-2">
+          <button type="button" class="btn btn-outline-primary" id="shyni_fix_url_btn" data-url="{{ arg['shyni_fix_url_yaml_url'] }}">ALIVE 고정주소 설정 출력</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="shyni_fix_url_wrap" class="form-group row" style="display:none;">
+      <label class="col-sm-3 col-form-label">고정주소 추가용 YAML</label>
+      <div class="col-sm-9">
+        <textarea id="shyni_fix_url_output" class="form-control" rows="18" readonly spellcheck="false" style="font-family:monospace;"></textarea>
+        <div class="mt-2">
+          <button type="button" class="btn btn-primary" id="shyni_fix_url_copy_btn">전체 복사</button>
+        </div>
+        <small class="form-text text-muted">ALIVE의 편집 화면에서 alive.yaml &gt; channel_source &gt; fix_url 바로 아래 기존 채널 다음에 붙여넣으세요. 출력 내용에는 재생용 API 키가 포함되므로 외부에 공개하지 마세요.</small>
       </div>
     </div>
 

@@ -1611,6 +1611,7 @@ class ModuleBasic(PluginModuleBase):
             arg['m3u_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tvh")
             arg['m3u_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tivimate")
             arg['m3u_shyni_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_shyni")
+            arg['shyni_fix_url_yaml_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/shyni_fix_url.yaml")
             arg['epg_raw_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_raw")
             arg['epg_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tvh")
             arg['epg_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tivimate")
@@ -1957,6 +1958,20 @@ class ModuleBasic(PluginModuleBase):
                     mimetype='audio/x-mpegurl',
                     headers={
                         'Content-Disposition': 'inline; filename=shyni_channels.m3u',
+                        'Cache-Control': 'no-store',
+                    },
+                )
+
+            elif sub == 'shyni_fix_url.yaml':
+                text = Task.build_shyni_fix_url_yaml(
+                    proxy_base_url=request.host_url.rstrip('/'),
+                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                )
+                return Response(
+                    text,
+                    mimetype='text/yaml',
+                    headers={
+                        'Content-Disposition': 'inline; filename=shyni_fix_url.yaml',
                         'Cache-Control': 'no-store',
                     },
                 )

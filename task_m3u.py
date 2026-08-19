@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import os
 import re
 import sqlite3
@@ -1713,6 +1714,51 @@ class TaskM3U(TaskBase):
         except Exception as e:
             logger.exception(f'[ff_tvh_m3u] build_m3u exception: {str(e)}')
             return '#EXTM3U\n'
+
+    @staticmethod
+    def build_shyni_fix_url_yaml(proxy_base_url='', proxy_apikey=''):
+        try:
+            grouped_rows = ModelChannel.get_grouped()
+            playlist_map = TaskM3U.fetch_playlist_map()
+            entry_lines = []
+
+            for _group_name, channels in grouped_rows.items():
+                for ch in channels:
+                    if not ch.get('enabled', True):
+                        continue
+
+                    channel_uuid = str(ch.get('channel_uuid') or '').strip()
+                    if not channel_uuid or not playlist_map.get(channel_uuid):
+                        continue
+
+                    channel_name = str(ch.get('name') or '').strip() or channel_uuid
+                    matched_channel_id = ch.get('sheet_id') or ch.get('sheet_channel_id') or ch.get('matched_channel_id') or ''
+                    logo_url = TaskM3U.get_effective_logo_url(
+                        channel_uuid=channel_uuid,
+                        channel_name=channel_name,
+                        sheet_logo_url=str(ch.get('sheet_logo_url') or '').strip(),
+                        matched_channel_id=matched_channel_id,
+                        base_url=str(proxy_base_url or '').rstrip('/'),
+                    )
+                    stream_url = TaskM3U.build_alive_stream_url(
+                        proxy_base_url,
+                        proxy_apikey,
+                        channel_uuid,
+                    )
+
+                    entry_lines.append(f'    {json.dumps(channel_uuid, ensure_ascii=False)}:')
+                    entry_lines.append(f'      name: {json.dumps(channel_name, ensure_ascii=False)}')
+                    if logo_url:
+                        entry_lines.append(f'      icon: {json.dumps(logo_url, ensure_ascii=False)}')
+                    entry_lines.append(f'      url: {json.dumps(stream_url, ensure_ascii=False)}')
+
+            if not entry_lines:
+                return '    # 출력할 채널이 없습니다. 먼저 채널 동기화를 실행하세요.\n'
+
+            return '\n'.join(entry_lines) + '\n'
+        except Exception as e:
+            logger.exception(f'[ff_tvh_m3u] build_shyni_fix_url_yaml exception: {str(e)}')
+            return '    # 고정주소 YAML 생성에 실패했습니다.\n'
 
     @staticmethod
     def build_epg_xml(target='tvh'):

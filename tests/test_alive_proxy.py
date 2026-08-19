@@ -126,6 +126,71 @@ class AliveProxyTest(unittest.TestCase):
         self.assertNotIn("arg['m3u_alive_url']", api_template)
         self.assertIn('Shyni용', api_template)
 
+    def test_alive_fixed_url_yaml_contains_proxy_channels(self):
+        task = TASK_M3U_MODULE.TaskM3U
+        original_package = getattr(TASK_M3U_MODULE.P, 'package_name', None)
+        originals = {
+            'get_grouped': getattr(TASK_M3U_MODULE.ModelChannel, 'get_grouped', None),
+            'fetch_playlist_map': task.fetch_playlist_map,
+            'get_effective_logo_url': task.get_effective_logo_url,
+        }
+        try:
+            TASK_M3U_MODULE.P.package_name = 'tvh_m3u_plugin'
+            TASK_M3U_MODULE.ModelChannel.get_grouped = staticmethod(lambda: {
+                '지상파': [{
+                    'enabled': True,
+                    'channel_uuid': 'channel-uuid',
+                    'name': 'KBS1: 서울',
+                    'sheet_logo_url': '',
+                }],
+            })
+            task.fetch_playlist_map = staticmethod(lambda: {
+                'channel-uuid': 'http://tvh.example/stream/channel/channel-uuid',
+            })
+            task.get_effective_logo_url = staticmethod(
+                lambda **_kwargs: 'https://oracle.example/logo/kbs1.png'
+            )
+
+            text = task.build_shyni_fix_url_yaml(
+                'https://oracle.example',
+                'PUBLICKEY1',
+            )
+        finally:
+            if original_package is None:
+                delattr(TASK_M3U_MODULE.P, 'package_name')
+            else:
+                TASK_M3U_MODULE.P.package_name = original_package
+            if originals['get_grouped'] is None:
+                delattr(TASK_M3U_MODULE.ModelChannel, 'get_grouped')
+            else:
+                TASK_M3U_MODULE.ModelChannel.get_grouped = originals['get_grouped']
+            task.fetch_playlist_map = originals['fetch_playlist_map']
+            task.get_effective_logo_url = originals['get_effective_logo_url']
+
+        self.assertTrue(text.startswith('    "channel-uuid":\n'))
+        self.assertNotIn('channel_source:', text)
+        self.assertNotIn('  fix_url:', text)
+        self.assertIn('      name: "KBS1: 서울"', text)
+        self.assertIn('      icon: "https://oracle.example/logo/kbs1.png"', text)
+        self.assertIn(
+            '      url: "https://oracle.example/tvh_m3u_plugin/api/url.m3u8'
+            '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1"',
+            text,
+        )
+        self.assertNotIn('@', text)
+
+    def test_fixed_url_ui_supports_output_and_copy(self):
+        module_source = (ROOT / 'mod_basic.py').read_text(encoding='utf-8-sig')
+        api_template = (ROOT / 'templates' / 'tvh_m3u_basic_api.html').read_text(encoding='utf-8-sig')
+        script = (ROOT / 'templates' / 'tvh_m3u_basic_common_script.html').read_text(encoding='utf-8-sig')
+
+        self.assertIn("sub == 'shyni_fix_url.yaml'", module_source)
+        self.assertIn('id="shyni_fix_url_btn"', api_template)
+        self.assertIn('id="shyni_fix_url_output"', api_template)
+        self.assertIn('id="shyni_fix_url_copy_btn"', api_template)
+        self.assertIn("navigator.clipboard.writeText(text)", script)
+        self.assertIn("document.execCommand('copy')", script)
+
     def test_m3u_settings_explain_credentials_are_server_side_only(self):
         source = (ROOT / 'templates' / 'tvh_m3u_basic_m3u.html').read_text(encoding='utf-8-sig')
 
