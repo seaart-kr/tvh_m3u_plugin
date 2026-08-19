@@ -1680,15 +1680,11 @@ class TaskM3U(TaskBase):
                         skipped_no_playlist += 1
                         continue
 
-                    if target == 'alive':
-                        stream_url = TaskM3U.build_alive_stream_url(
-                            proxy_base_url,
-                            proxy_apikey,
-                            channel_uuid,
-                        )
-                    else:
-                        effective_profile = TaskM3U.get_effective_profile(channel_uuid, group_name)
-                        stream_url = TaskM3U.normalize_stream_url(source_url, effective_profile)
+                    stream_url = TaskM3U.build_alive_stream_url(
+                        proxy_base_url,
+                        proxy_apikey,
+                        channel_uuid,
+                    )
                     if not stream_url:
                         skipped_empty_url += 1
                         continue

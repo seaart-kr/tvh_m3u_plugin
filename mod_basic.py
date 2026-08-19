@@ -1882,7 +1882,10 @@ class ModuleBasic(PluginModuleBase):
                 target = (request.form.get('target') or 'tivimate').strip().lower()
                 if target not in ['tvh', 'tivimate']:
                     target = 'tivimate'
-                text = Task.build_m3u(target=target)
+                text = Task.build_m3u(
+                    target=target,
+                    proxy_base_url=request.host_url.rstrip('/'),
+                )
                 preview = '\n'.join(text.splitlines()[:1000])
                 return jsonify({'ret': 'success', 'preview': preview, 'msg': f'M3U 미리보기 생성 완료 ({target})'})
 
@@ -1908,7 +1911,11 @@ class ModuleBasic(PluginModuleBase):
                 return gate
 
             if sub == 'm3u':
-                text = Task.build_m3u(target='tivimate')
+                text = Task.build_m3u(
+                    target='tivimate',
+                    proxy_base_url=request.host_url.rstrip('/'),
+                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                )
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',
@@ -1916,7 +1923,11 @@ class ModuleBasic(PluginModuleBase):
                 )
 
             elif sub == 'm3u_tvh':
-                text = Task.build_m3u(target='tvh')
+                text = Task.build_m3u(
+                    target='tvh',
+                    proxy_base_url=request.host_url.rstrip('/'),
+                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                )
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',
@@ -1924,7 +1935,11 @@ class ModuleBasic(PluginModuleBase):
                 )
 
             elif sub == 'm3u_tivimate':
-                text = Task.build_m3u(target='tivimate')
+                text = Task.build_m3u(
+                    target='tivimate',
+                    proxy_base_url=request.host_url.rstrip('/'),
+                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                )
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',

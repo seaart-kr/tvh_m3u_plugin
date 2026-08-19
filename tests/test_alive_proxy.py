@@ -93,6 +93,31 @@ class AliveProxyTest(unittest.TestCase):
         self.assertIn("response.headers['X-Accel-Buffering'] = 'no'", source)
         self.assertIn('stream_with_context(generate_stream())', source)
 
+    def test_all_playlist_targets_use_proxy_urls(self):
+        source = (ROOT / 'task_m3u.py').read_text(encoding='utf-8-sig')
+        build_m3u_source = source[source.index('    def build_m3u('):source.index('    def get_m3u_url(')]
+
+        self.assertIn('TaskM3U.build_alive_stream_url(', build_m3u_source)
+        self.assertNotIn("if target == 'alive'", build_m3u_source)
+        self.assertNotIn('TaskM3U.normalize_stream_url(source_url', build_m3u_source)
+
+    def test_existing_playlist_apis_forward_their_key_to_proxy_urls(self):
+        source = (ROOT / 'mod_basic.py').read_text(encoding='utf-8-sig')
+        api_source = source[source.index('    def process_api('):]
+
+        for sub in ['m3u', 'm3u_tvh', 'm3u_tivimate', 'm3u_alive']:
+            marker = f"sub == '{sub}'"
+            start = api_source.index(marker)
+            block = api_source[start:start + 650]
+            self.assertIn("proxy_base_url=request.host_url.rstrip('/')", block)
+            self.assertIn("proxy_apikey=str(request.args.get('apikey') or '').strip()", block)
+
+    def test_m3u_settings_explain_credentials_are_server_side_only(self):
+        source = (ROOT / 'templates' / 'tvh_m3u_basic_m3u.html').read_text(encoding='utf-8-sig')
+
+        self.assertNotIn('M3U URL에 재생 계정 포함', source)
+        self.assertIn('서버 내부 TVH 인증에만 사용되며 M3U에는 포함되지 않습니다', source)
+
 
 if __name__ == '__main__':
     unittest.main()
