@@ -163,8 +163,64 @@ function updateDliveEpgToggleState() {
   }
 }
 
+function copyTextWithFallback(text, $textarea) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  $textarea.focus().select();
+  var copied = document.execCommand('copy');
+  window.getSelection().removeAllRanges();
+  return copied ? Promise.resolve() : Promise.reject(new Error('copy failed'));
+}
+
 $(document).ready(function(){
   updateDliveEpgToggleState();
+});
+
+$("body").on('click', '#shyni_fix_url_btn', function(e){
+  e.preventDefault();
+  var $btn = $(this);
+  var url = String($btn.data('url') || '');
+  if (!url) {
+    notify('고정주소 설정 URL이 없습니다.', 'warning');
+    return;
+  }
+
+  setButtonLoading($btn, '생성중');
+  $.ajax({
+    url: url,
+    type: 'GET',
+    cache: false,
+    dataType: 'text',
+    success: function(text) {
+      $('#shyni_fix_url_output').val(text || '');
+      $('#shyni_fix_url_wrap').show();
+      notify('ALIVE 고정주소 설정을 생성했습니다.', 'success');
+    },
+    error: function(xhr) {
+      $('#shyni_fix_url_output').val('생성 실패\n' + (xhr.responseText || ''));
+      $('#shyni_fix_url_wrap').show();
+      notify('고정주소 설정 생성 실패', 'danger');
+    },
+    complete: function() {
+      clearButtonLoading($btn);
+    }
+  });
+});
+
+$("body").on('click', '#shyni_fix_url_copy_btn', function(e){
+  e.preventDefault();
+  var $textarea = $('#shyni_fix_url_output');
+  var text = String($textarea.val() || '');
+  if (!text) {
+    notify('먼저 고정주소 설정을 출력하세요.', 'warning');
+    return;
+  }
+  copyTextWithFallback(text, $textarea).then(function(){
+    notify('고정주소 YAML 전체를 복사했습니다.', 'success');
+  }).catch(function(){
+    notify('자동 복사에 실패했습니다. 출력창에서 직접 복사하세요.', 'warning');
+  });
 });
 
 $("body").on('click', '#basic_epg_dlive_toggle_btn', function(e){
