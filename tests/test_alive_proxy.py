@@ -167,9 +167,9 @@ class AliveProxyTest(unittest.TestCase):
             task.fetch_playlist_map = originals['fetch_playlist_map']
             task.get_effective_logo_url = originals['get_effective_logo_url']
 
-        self.assertTrue(text.startswith('    "channel-uuid":\n'))
-        self.assertNotIn('channel_source:', text)
-        self.assertNotIn('  fix_url:', text)
+        self.assertTrue(text.startswith('channel_source:\n  fix_url:\n'))
+        self.assertIn('channel_source:', text)
+        self.assertIn('  fix_url:', text)
         self.assertIn('      name: "KBS1: 서울"', text)
         self.assertIn('      icon: "https://oracle.example/logo/kbs1.png"', text)
         self.assertIn(
