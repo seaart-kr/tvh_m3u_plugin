@@ -1720,6 +1720,7 @@ class TaskM3U(TaskBase):
         try:
             grouped_rows = ModelChannel.get_grouped()
             playlist_map = TaskM3U.fetch_playlist_map()
+            lines = ['channel_source:', '  fix_url:']
             entry_lines = []
 
             for _group_name, channels in grouped_rows.items():
@@ -1753,12 +1754,13 @@ class TaskM3U(TaskBase):
                     entry_lines.append(f'      url: {json.dumps(stream_url, ensure_ascii=False)}')
 
             if not entry_lines:
-                return '    # 출력할 채널이 없습니다. 먼저 채널 동기화를 실행하세요.\n'
+                return 'channel_source:\n  fix_url: {}\n'
 
-            return '\n'.join(entry_lines) + '\n'
+            lines.extend(entry_lines)
+            return '\n'.join(lines) + '\n'
         except Exception as e:
             logger.exception(f'[ff_tvh_m3u] build_shyni_fix_url_yaml exception: {str(e)}')
-            return '    # 고정주소 YAML 생성에 실패했습니다.\n'
+            return 'channel_source:\n  fix_url: {}\n'
 
     @staticmethod
     def build_epg_xml(target='tvh'):
