@@ -1946,7 +1946,7 @@ class ModuleBasic(PluginModuleBase):
                     headers={'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
                 )
 
-            elif sub in ['m3u_shyni', 'm3u_alive']:
+            elif sub == 'm3u_shyni':
                 text = Task.build_m3u(
                     target='shyni',
                     proxy_base_url=request.host_url.rstrip('/'),
