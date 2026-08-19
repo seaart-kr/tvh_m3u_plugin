@@ -1626,7 +1626,7 @@ class TaskM3U(TaskBase):
             f'group-title="{group_name}"',
         ]
 
-        if target in ['tivimate', 'alive'] and logo_url:
+        if target in ['tivimate', 'alive', 'shyni'] and logo_url:
             attrs.append(f'tvg-logo="{logo_url}"')
 
         return f'#EXTINF:-1 {" ".join(attrs)},{tvg_name_text}'
@@ -1635,7 +1635,7 @@ class TaskM3U(TaskBase):
     def build_m3u(target='tivimate', proxy_base_url='', proxy_apikey=''):
         try:
             target = str(target or 'tivimate').strip().lower()
-            if target not in ['tvh', 'tivimate', 'alive']:
+            if target not in ['tvh', 'tivimate', 'alive', 'shyni']:
                 target = 'tivimate'
 
             logger.info(f'[ff_tvh_m3u] build_m3u start target={target}')
@@ -1772,6 +1772,8 @@ class TaskM3U(TaskBase):
                 return f'{base_url}/{P.package_name}/api/m3u_tvh'
             if target == 'alive':
                 return f'{base_url}/{P.package_name}/api/m3u_alive'
+            if target == 'shyni':
+                return f'{base_url}/{P.package_name}/api/m3u_shyni'
             if target == 'tivimate':
                 return f'{base_url}/{P.package_name}/api/m3u_tivimate'
             return f'{base_url}/{P.package_name}/api/m3u'
@@ -1781,6 +1783,8 @@ class TaskM3U(TaskBase):
                 return f'/{P.package_name}/api/m3u_tvh'
             if str(target or '').strip().lower() == 'alive':
                 return f'/{P.package_name}/api/m3u_alive'
+            if str(target or '').strip().lower() == 'shyni':
+                return f'/{P.package_name}/api/m3u_shyni'
             if str(target or '').strip().lower() == 'tivimate':
                 return f'/{P.package_name}/api/m3u_tivimate'
             return f'/{P.package_name}/api/m3u'

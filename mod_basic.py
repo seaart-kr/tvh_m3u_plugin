@@ -1610,7 +1610,7 @@ class ModuleBasic(PluginModuleBase):
             arg['m3u_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u")
             arg['m3u_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tvh")
             arg['m3u_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tivimate")
-            arg['m3u_alive_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_alive")
+            arg['m3u_shyni_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_shyni")
             arg['epg_raw_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_raw")
             arg['epg_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tvh")
             arg['epg_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tivimate")
@@ -1946,9 +1946,9 @@ class ModuleBasic(PluginModuleBase):
                     headers={'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
                 )
 
-            elif sub == 'm3u_alive':
+            elif sub in ['m3u_shyni', 'm3u_alive']:
                 text = Task.build_m3u(
-                    target='alive',
+                    target='shyni',
                     proxy_base_url=request.host_url.rstrip('/'),
                     proxy_apikey=str(request.args.get('apikey') or '').strip(),
                 )
@@ -1956,7 +1956,7 @@ class ModuleBasic(PluginModuleBase):
                     text,
                     mimetype='audio/x-mpegurl',
                     headers={
-                        'Content-Disposition': 'inline; filename=alive_channels.m3u',
+                        'Content-Disposition': 'inline; filename=shyni_channels.m3u',
                         'Cache-Control': 'no-store',
                     },
                 )

@@ -87,7 +87,8 @@ class AliveProxyTest(unittest.TestCase):
             for comparator in node.comparators
             if isinstance(comparator, ast.Constant)
         }
-        self.assertIn('m3u_alive', sub_values)
+        self.assertIn('m3u_shyni', source)
+        self.assertIn('m3u_alive', source)
         self.assertIn('url.m3u8', sub_values)
         self.assertIn("allow_redirects=False", source)
         self.assertIn("response.headers['X-Accel-Buffering'] = 'no'", source)
@@ -105,12 +106,25 @@ class AliveProxyTest(unittest.TestCase):
         source = (ROOT / 'mod_basic.py').read_text(encoding='utf-8-sig')
         api_source = source[source.index('    def process_api('):]
 
-        for sub in ['m3u', 'm3u_tvh', 'm3u_tivimate', 'm3u_alive']:
+        for sub in ['m3u', 'm3u_tvh', 'm3u_tivimate']:
             marker = f"sub == '{sub}'"
             start = api_source.index(marker)
             block = api_source[start:start + 650]
             self.assertIn("proxy_base_url=request.host_url.rstrip('/')", block)
             self.assertIn("proxy_apikey=str(request.args.get('apikey') or '').strip()", block)
+
+        shyni_block = api_source[api_source.index("sub in ['m3u_shyni', 'm3u_alive']"):]
+        self.assertIn("target='shyni'", shyni_block[:650])
+        self.assertIn("proxy_apikey=str(request.args.get('apikey') or '').strip()", shyni_block[:650])
+
+    def test_shyni_is_the_published_alive_compatible_address(self):
+        module_source = (ROOT / 'mod_basic.py').read_text(encoding='utf-8-sig')
+        api_template = (ROOT / 'templates' / 'tvh_m3u_basic_api.html').read_text(encoding='utf-8-sig')
+
+        self.assertIn('/api/m3u_shyni', module_source)
+        self.assertIn("arg['m3u_shyni_url']", api_template)
+        self.assertNotIn("arg['m3u_alive_url']", api_template)
+        self.assertIn('Shyni용', api_template)
 
     def test_m3u_settings_explain_credentials_are_server_side_only(self):
         source = (ROOT / 'templates' / 'tvh_m3u_basic_m3u.html').read_text(encoding='utf-8-sig')
