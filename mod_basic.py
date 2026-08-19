@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
 import requests
-from flask import request, render_template, jsonify, redirect, Response, render_template_string
+from flask import request, render_template, jsonify, redirect, Response, render_template_string, stream_with_context
 
 from .setup import *
 from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, ModelChannelProfile, ModelLogoOverride, DB_PATH
@@ -1610,6 +1610,7 @@ class ModuleBasic(PluginModuleBase):
             arg['m3u_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u")
             arg['m3u_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tvh")
             arg['m3u_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tivimate")
+            arg['m3u_alive_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_alive")
             arg['epg_raw_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_raw")
             arg['epg_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tvh")
             arg['epg_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tivimate")
@@ -1929,6 +1930,80 @@ class ModuleBasic(PluginModuleBase):
                     mimetype='audio/x-mpegurl',
                     headers={'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
                 )
+
+            elif sub == 'm3u_alive':
+                text = Task.build_m3u(
+                    target='alive',
+                    proxy_base_url=request.host_url.rstrip('/'),
+                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                )
+                return Response(
+                    text,
+                    mimetype='audio/x-mpegurl',
+                    headers={
+                        'Content-Disposition': 'inline; filename=alive_channels.m3u',
+                        'Cache-Control': 'no-store',
+                    },
+                )
+
+            elif sub == 'url.m3u8':
+                if str(request.args.get('m') or '').strip().lower() != 'url':
+                    return Response('invalid mode', status=400, mimetype='text/plain')
+                if str(request.args.get('s') or '').strip().lower() != 'tvh':
+                    return Response('invalid source', status=400, mimetype='text/plain')
+
+                resolved = Task.resolve_alive_stream(request.args.get('i'))
+                if resolved.get('ret') != 'success':
+                    return Response(
+                        resolved.get('msg') or 'stream unavailable',
+                        status=int(resolved.get('status') or 404),
+                        mimetype='text/plain',
+                    )
+
+                upstream = None
+                try:
+                    upstream = Task.get_play_session().get(
+                        resolved.get('upstream_url'),
+                        stream=True,
+                        timeout=(10, None),
+                        allow_redirects=False,
+                        headers={'User-Agent': 'tvh_m3u_plugin/alive-proxy'},
+                    )
+                    if upstream.status_code not in [200, 206]:
+                        upstream.close()
+                        return Response('TVH stream unavailable', status=502, mimetype='text/plain')
+
+                    def generate_stream():
+                        try:
+                            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                                if chunk:
+                                    yield chunk
+                        except requests.RequestException:
+                            logger.warning(
+                                '[ff_tvh_m3u] alive stream interrupted '
+                                f'channel_uuid={resolved.get("channel_uuid", "")}'
+                            )
+                        finally:
+                            upstream.close()
+
+                    response = Response(
+                        stream_with_context(generate_stream()),
+                        status=upstream.status_code,
+                        content_type=upstream.headers.get('Content-Type') or 'video/mp2t',
+                        direct_passthrough=True,
+                    )
+                    response.headers['Cache-Control'] = 'no-store'
+                    response.headers['X-Accel-Buffering'] = 'no'
+                    response.call_on_close(upstream.close)
+                    return response
+                except requests.RequestException:
+                    if upstream is not None:
+                        upstream.close()
+                    logger.warning(
+                        '[ff_tvh_m3u] alive stream upstream connection failed '
+                        f'channel_uuid={resolved.get("channel_uuid", "")}'
+                    )
+                    return Response('TVH stream unavailable', status=502, mimetype='text/plain')
 
             elif sub == 'custom_logo_mirror':
                 return jsonify(handle_custom_logo_mirror(req))

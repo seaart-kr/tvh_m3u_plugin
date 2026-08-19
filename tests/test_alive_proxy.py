@@ -1,0 +1,98 @@
+import ast
+import types
+import unittest
+from pathlib import Path
+
+from test_logo_regressions import TASK_M3U_MODULE
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class AliveProxyTest(unittest.TestCase):
+    def test_proxy_url_uses_plugin_key_without_tvh_credentials(self):
+        task = TASK_M3U_MODULE.TaskM3U
+        original_package = getattr(TASK_M3U_MODULE.P, 'package_name', None)
+        TASK_M3U_MODULE.P.package_name = 'tvh_m3u_plugin'
+        try:
+            url = task.build_alive_stream_url(
+                'https://oracle.example',
+                'PUBLICKEY1',
+                'channel-uuid',
+            )
+        finally:
+            if original_package is None:
+                delattr(TASK_M3U_MODULE.P, 'package_name')
+            else:
+                TASK_M3U_MODULE.P.package_name = original_package
+
+        self.assertEqual(
+            url,
+            'https://oracle.example/tvh_m3u_plugin/api/url.m3u8'
+            '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1',
+        )
+        self.assertNotIn('@', url)
+
+    def test_resolver_validates_channel_and_never_embeds_auth(self):
+        task = TASK_M3U_MODULE.TaskM3U
+        channel = types.SimpleNamespace(
+            enabled=True,
+            name='KBS1',
+            get_effective_group_name=lambda: '지상파',
+        )
+        originals = {
+            'get_channel_map': getattr(TASK_M3U_MODULE.ModelChannel, 'get_channel_map', None),
+            'fetch_playlist_map': task.fetch_playlist_map,
+            'get_effective_profile': task.get_effective_profile,
+            'normalize_stream_url': task.normalize_stream_url,
+        }
+        calls = []
+        try:
+            TASK_M3U_MODULE.ModelChannel.get_channel_map = staticmethod(
+                lambda: {'channel-uuid': channel}
+            )
+            task.fetch_playlist_map = staticmethod(
+                lambda: {'channel-uuid': 'http://tvh.example/stream/channel/channel-uuid'}
+            )
+            task.get_effective_profile = staticmethod(lambda *_args: 'pass')
+
+            def normalize(source_url, profile='', include_auth=None):
+                calls.append((source_url, profile, include_auth))
+                return 'http://tvh.example/stream/channel/channel-uuid?profile=pass'
+
+            task.normalize_stream_url = staticmethod(normalize)
+            result = task.resolve_alive_stream('channel-uuid')
+        finally:
+            if originals['get_channel_map'] is None:
+                delattr(TASK_M3U_MODULE.ModelChannel, 'get_channel_map')
+            else:
+                TASK_M3U_MODULE.ModelChannel.get_channel_map = originals['get_channel_map']
+            task.fetch_playlist_map = originals['fetch_playlist_map']
+            task.get_effective_profile = originals['get_effective_profile']
+            task.normalize_stream_url = originals['normalize_stream_url']
+
+        self.assertEqual(result['ret'], 'success')
+        self.assertEqual(calls[0][2], False)
+        self.assertNotIn('@', result['upstream_url'])
+
+    def test_api_has_alive_playlist_and_streaming_proxy_guards(self):
+        source = (ROOT / 'mod_basic.py').read_text(encoding='utf-8-sig')
+        tree = ast.parse(source)
+        sub_values = {
+            comparator.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Compare)
+            and isinstance(node.left, ast.Name)
+            and node.left.id == 'sub'
+            for comparator in node.comparators
+            if isinstance(comparator, ast.Constant)
+        }
+        self.assertIn('m3u_alive', sub_values)
+        self.assertIn('url.m3u8', sub_values)
+        self.assertIn("allow_redirects=False", source)
+        self.assertIn("response.headers['X-Accel-Buffering'] = 'no'", source)
+        self.assertIn('stream_with_context(generate_stream())', source)
+
+
+if __name__ == '__main__':
+    unittest.main()
