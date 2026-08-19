@@ -88,7 +88,7 @@ class AliveProxyTest(unittest.TestCase):
             if isinstance(comparator, ast.Constant)
         }
         self.assertIn('m3u_shyni', source)
-        self.assertIn('m3u_alive', source)
+        self.assertNotIn('m3u_alive', source)
         self.assertIn('url.m3u8', sub_values)
         self.assertIn("allow_redirects=False", source)
         self.assertIn("response.headers['X-Accel-Buffering'] = 'no'", source)
@@ -113,7 +113,7 @@ class AliveProxyTest(unittest.TestCase):
             self.assertIn("proxy_base_url=request.host_url.rstrip('/')", block)
             self.assertIn("proxy_apikey=str(request.args.get('apikey') or '').strip()", block)
 
-        shyni_block = api_source[api_source.index("sub in ['m3u_shyni', 'm3u_alive']"):]
+        shyni_block = api_source[api_source.index("sub == 'm3u_shyni'"):]
         self.assertIn("target='shyni'", shyni_block[:650])
         self.assertIn("proxy_apikey=str(request.args.get('apikey') or '').strip()", shyni_block[:650])
 
