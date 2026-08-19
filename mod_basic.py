@@ -1976,7 +1976,7 @@ class ModuleBasic(PluginModuleBase):
                     },
                 )
 
-            elif sub == 'url.m3u8':
+            elif sub == 'stream.ts' or sub == 'url.m3u8':
                 if str(request.args.get('m') or '').strip().lower() != 'url':
                     return Response('invalid mode', status=400, mimetype='text/plain')
                 if str(request.args.get('s') or '').strip().lower() != 'tvh':
@@ -2019,7 +2019,7 @@ class ModuleBasic(PluginModuleBase):
                     response = Response(
                         stream_with_context(generate_stream()),
                         status=upstream.status_code,
-                        content_type=upstream.headers.get('Content-Type') or 'video/mp2t',
+                        content_type='video/mp2t',
                         direct_passthrough=True,
                     )
                     response.headers['Cache-Control'] = 'no-store'

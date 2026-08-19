@@ -28,7 +28,7 @@ class AliveProxyTest(unittest.TestCase):
 
         self.assertEqual(
             url,
-            'https://oracle.example/tvh_m3u_plugin/api/url.m3u8'
+            'https://oracle.example/tvh_m3u_plugin/api/stream.ts'
             '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1',
         )
         self.assertNotIn('@', url)
@@ -89,7 +89,9 @@ class AliveProxyTest(unittest.TestCase):
         }
         self.assertIn('m3u_shyni', source)
         self.assertNotIn('m3u_alive', source)
+        self.assertIn('stream.ts', sub_values)
         self.assertIn('url.m3u8', sub_values)
+        self.assertIn("content_type='video/mp2t'", source)
         self.assertIn("allow_redirects=False", source)
         self.assertIn("response.headers['X-Accel-Buffering'] = 'no'", source)
         self.assertIn('stream_with_context(generate_stream())', source)
@@ -173,7 +175,7 @@ class AliveProxyTest(unittest.TestCase):
         self.assertIn('      name: "KBS1: 서울"', text)
         self.assertIn('      icon: "https://oracle.example/logo/kbs1.png"', text)
         self.assertIn(
-            '      url: "https://oracle.example/tvh_m3u_plugin/api/url.m3u8'
+            '      url: "https://oracle.example/tvh_m3u_plugin/api/stream.ts'
             '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1"',
             text,
         )

@@ -140,7 +140,7 @@ class TaskM3U(TaskBase):
         ]
         if api_key:
             query.append(('apikey', str(api_key).strip()))
-        return f'{base_url}/{P.package_name}/api/url.m3u8?{urlencode(query)}'
+        return f'{base_url}/{P.package_name}/api/stream.ts?{urlencode(query)}'
 
     @staticmethod
     def resolve_alive_stream(channel_uuid):
