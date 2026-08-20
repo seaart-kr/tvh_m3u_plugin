@@ -20,6 +20,12 @@ class AliveProxyTest(unittest.TestCase):
                 'PUBLICKEY1',
                 'channel-uuid',
             )
+            raw_url = task.build_proxy_stream_url(
+                'https://oracle.example',
+                'PUBLICKEY1',
+                'channel-uuid',
+                use_hls=False,
+            )
         finally:
             if original_package is None:
                 delattr(TASK_M3U_MODULE.P, 'package_name')
@@ -28,10 +34,13 @@ class AliveProxyTest(unittest.TestCase):
 
         self.assertEqual(
             url,
-            'https://oracle.example/tvh_m3u_plugin/api/stream.ts'
+            'https://oracle.example/tvh_m3u_plugin/api/url.m3u8'
             '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1',
         )
         self.assertNotIn('@', url)
+
+        self.assertIn('/api/stream.ts?', raw_url)
+        self.assertNotIn('@', raw_url)
 
     def test_resolver_validates_channel_and_never_embeds_auth(self):
         task = TASK_M3U_MODULE.TaskM3U
@@ -87,10 +96,13 @@ class AliveProxyTest(unittest.TestCase):
             for comparator in node.comparators
             if isinstance(comparator, ast.Constant)
         }
-        self.assertIn('m3u_shyni', source)
+        self.assertNotIn('m3u_shyni', source)
         self.assertNotIn('m3u_alive', source)
         self.assertIn('stream.ts', sub_values)
         self.assertIn('url.m3u8', sub_values)
+        self.assertIn('hls_segment.ts', sub_values)
+        self.assertIn('HLSManager.ensure_stream(', source)
+        self.assertIn('HLSManager.read_segment(', source)
         self.assertIn("content_type='video/mp2t'", source)
         self.assertIn("allow_redirects=False", source)
         self.assertIn("response.headers['X-Accel-Buffering'] = 'no'", source)
@@ -100,7 +112,8 @@ class AliveProxyTest(unittest.TestCase):
         source = (ROOT / 'task_m3u.py').read_text(encoding='utf-8-sig')
         build_m3u_source = source[source.index('    def build_m3u('):source.index('    def get_m3u_url(')]
 
-        self.assertIn('TaskM3U.build_alive_stream_url(', build_m3u_source)
+        self.assertIn('TaskM3U.build_proxy_stream_url(', build_m3u_source)
+        self.assertIn("use_hls=(target == 'tivimate')", build_m3u_source)
         self.assertNotIn("if target == 'alive'", build_m3u_source)
         self.assertNotIn('TaskM3U.normalize_stream_url(source_url', build_m3u_source)
 
@@ -115,18 +128,15 @@ class AliveProxyTest(unittest.TestCase):
             self.assertIn("proxy_base_url=request.host_url.rstrip('/')", block)
             self.assertIn("proxy_apikey=str(request.args.get('apikey') or '').strip()", block)
 
-        shyni_block = api_source[api_source.index("sub == 'm3u_shyni'"):]
-        self.assertIn("target='shyni'", shyni_block[:650])
-        self.assertIn("proxy_apikey=str(request.args.get('apikey') or '').strip()", shyni_block[:650])
-
-    def test_shyni_is_the_published_alive_compatible_address(self):
+    def test_tivimate_and_shyni_share_one_published_address(self):
         module_source = (ROOT / 'mod_basic.py').read_text(encoding='utf-8-sig')
         api_template = (ROOT / 'templates' / 'tvh_m3u_basic_api.html').read_text(encoding='utf-8-sig')
 
-        self.assertIn('/api/m3u_shyni', module_source)
-        self.assertIn("arg['m3u_shyni_url']", api_template)
+        self.assertNotIn('/api/m3u_shyni', module_source)
+        self.assertNotIn("arg['m3u_shyni_url']", api_template)
         self.assertNotIn("arg['m3u_alive_url']", api_template)
-        self.assertIn('Shyni용', api_template)
+        self.assertIn('TiviMate/Shyni용', api_template)
+        self.assertIn("arg['m3u_tivimate_url']", api_template)
 
     def test_alive_fixed_url_yaml_contains_proxy_channels(self):
         task = TASK_M3U_MODULE.TaskM3U
@@ -153,7 +163,7 @@ class AliveProxyTest(unittest.TestCase):
                 lambda **_kwargs: 'https://oracle.example/logo/kbs1.png'
             )
 
-            text = task.build_shyni_fix_url_yaml(
+            text = task.build_alive_fix_url_yaml(
                 'https://oracle.example',
                 'PUBLICKEY1',
             )
@@ -175,7 +185,7 @@ class AliveProxyTest(unittest.TestCase):
         self.assertIn('      name: "KBS1: 서울"', text)
         self.assertIn('      icon: "https://oracle.example/logo/kbs1.png"', text)
         self.assertIn(
-            '      url: "https://oracle.example/tvh_m3u_plugin/api/stream.ts'
+            '      url: "https://oracle.example/tvh_m3u_plugin/api/url.m3u8'
             '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1"',
             text,
         )
@@ -186,10 +196,10 @@ class AliveProxyTest(unittest.TestCase):
         api_template = (ROOT / 'templates' / 'tvh_m3u_basic_api.html').read_text(encoding='utf-8-sig')
         script = (ROOT / 'templates' / 'tvh_m3u_basic_common_script.html').read_text(encoding='utf-8-sig')
 
-        self.assertIn("sub == 'shyni_fix_url.yaml'", module_source)
-        self.assertIn('id="shyni_fix_url_btn"', api_template)
-        self.assertIn('id="shyni_fix_url_output"', api_template)
-        self.assertIn('id="shyni_fix_url_copy_btn"', api_template)
+        self.assertIn("sub == 'alive_fix_url.yaml'", module_source)
+        self.assertIn('id="alive_fix_url_btn"', api_template)
+        self.assertIn('id="alive_fix_url_output"', api_template)
+        self.assertIn('id="alive_fix_url_copy_btn"', api_template)
         self.assertIn("navigator.clipboard.writeText(text)", script)
         self.assertIn("document.execCommand('copy')", script)
 

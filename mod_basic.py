@@ -14,6 +14,7 @@ import tempfile
 import errno
 from contextlib import contextmanager
 from datetime import datetime
+from urllib.parse import urlencode
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import quoteattr
 
@@ -25,6 +26,7 @@ from .model import ModelTag, ModelChannel, ModelGroupOrder, ModelGroupProfile, M
 from .task import Task
 from .task_custom_logo import handle_custom_logo_upload, handle_custom_logo_mirror
 from .task_epg_extra import build_dlive_epg_xml_bytes, merge_xmltv_files, DEFAULT_DLIVE_SCHEDULE_URL, DEFAULT_DLIVE_SOURCE_NAME
+from .hls_manager import HLSManager
 
 
 def _is_sync_form(req):
@@ -1610,8 +1612,7 @@ class ModuleBasic(PluginModuleBase):
             arg['m3u_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u")
             arg['m3u_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tvh")
             arg['m3u_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tivimate")
-            arg['m3u_shyni_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_shyni")
-            arg['shyni_fix_url_yaml_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/shyni_fix_url.yaml")
+            arg['alive_fix_url_yaml_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/alive_fix_url.yaml")
             arg['epg_raw_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_raw")
             arg['epg_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tvh")
             arg['epg_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tivimate")
@@ -1944,26 +1945,14 @@ class ModuleBasic(PluginModuleBase):
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',
-                    headers={'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
-                )
-
-            elif sub == 'm3u_shyni':
-                text = Task.build_m3u(
-                    target='shyni',
-                    proxy_base_url=request.host_url.rstrip('/'),
-                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
-                )
-                return Response(
-                    text,
-                    mimetype='audio/x-mpegurl',
                     headers={
-                        'Content-Disposition': 'inline; filename=shyni_channels.m3u',
+                        'Content-Disposition': 'inline; filename=tivimate_shyni_channels.m3u',
                         'Cache-Control': 'no-store',
                     },
                 )
 
-            elif sub == 'shyni_fix_url.yaml':
-                text = Task.build_shyni_fix_url_yaml(
+            elif sub == 'alive_fix_url.yaml':
+                text = Task.build_alive_fix_url_yaml(
                     proxy_base_url=request.host_url.rstrip('/'),
                     proxy_apikey=str(request.args.get('apikey') or '').strip(),
                 )
@@ -1971,12 +1960,97 @@ class ModuleBasic(PluginModuleBase):
                     text,
                     mimetype='text/yaml',
                     headers={
-                        'Content-Disposition': 'inline; filename=shyni_fix_url.yaml',
+                        'Content-Disposition': 'inline; filename=alive_fix_url.yaml',
                         'Cache-Control': 'no-store',
                     },
                 )
 
-            elif sub == 'stream.ts' or sub == 'url.m3u8':
+            elif sub == 'url.m3u8':
+                if str(request.args.get('m') or '').strip().lower() != 'url':
+                    return Response('invalid mode', status=400, mimetype='text/plain')
+                if str(request.args.get('s') or '').strip().lower() != 'tvh':
+                    return Response('invalid source', status=400, mimetype='text/plain')
+
+                channel_uuid = str(request.args.get('i') or '').strip()
+                validated = Task.validate_alive_stream_channel(channel_uuid)
+                if validated.get('ret') != 'success':
+                    return Response(
+                        validated.get('msg') or 'stream unavailable',
+                        status=int(validated.get('status') or 404),
+                        mimetype='text/plain',
+                    )
+
+                cached_playlist = HLSManager.get_playlist(channel_uuid)
+                if cached_playlist:
+                    hls = {'ret': 'success', 'playlist': cached_playlist}
+                else:
+                    resolved = Task.resolve_alive_stream(channel_uuid)
+                    if resolved.get('ret') != 'success':
+                        return Response(
+                            resolved.get('msg') or 'stream unavailable',
+                            status=int(resolved.get('status') or 404),
+                            mimetype='text/plain',
+                        )
+                    hls = HLSManager.ensure_stream(
+                        resolved.get('channel_uuid'),
+                        resolved.get('upstream_url'),
+                        username=Task.get_play_username(),
+                        password=Task.get_play_password(),
+                    )
+                if hls.get('ret') != 'success':
+                    return Response(
+                        hls.get('msg') or 'HLS stream unavailable',
+                        status=int(hls.get('status') or 502),
+                        mimetype='text/plain',
+                    )
+
+                api_key = str(request.args.get('apikey') or '').strip()
+                playlist_lines = []
+                for raw_line in str(hls.get('playlist') or '').splitlines():
+                    line = raw_line.strip()
+                    if line and not line.startswith('#'):
+                        filename = os.path.basename(line)
+                        query = [
+                            ('m', 'url'),
+                            ('s', 'tvh'),
+                            ('i', channel_uuid),
+                            ('f', filename),
+                        ]
+                        if api_key:
+                            query.append(('apikey', api_key))
+                        line = (
+                            f'{request.host_url.rstrip("/")}/{P.package_name}/api/'
+                            f'hls_segment.ts?{urlencode(query)}'
+                        )
+                    playlist_lines.append(line)
+
+                return Response(
+                    '\n'.join(playlist_lines) + '\n',
+                    mimetype='application/vnd.apple.mpegurl',
+                    headers={
+                        'Cache-Control': 'no-store',
+                        'X-Accel-Buffering': 'no',
+                    },
+                )
+
+            elif sub == 'hls_segment.ts':
+                if str(request.args.get('m') or '').strip().lower() != 'url':
+                    return Response('invalid mode', status=400, mimetype='text/plain')
+                if str(request.args.get('s') or '').strip().lower() != 'tvh':
+                    return Response('invalid source', status=400, mimetype='text/plain')
+                segment = HLSManager.read_segment(
+                    request.args.get('i'),
+                    request.args.get('f'),
+                )
+                if segment is None:
+                    return Response('segment not found', status=404, mimetype='text/plain')
+                return Response(
+                    segment,
+                    content_type='video/mp2t',
+                    headers={'Cache-Control': 'no-store'},
+                )
+
+            elif sub == 'stream.ts':
                 if str(request.args.get('m') or '').strip().lower() != 'url':
                     return Response('invalid mode', status=400, mimetype='text/plain')
                 if str(request.args.get('s') or '').strip().lower() != 'tvh':

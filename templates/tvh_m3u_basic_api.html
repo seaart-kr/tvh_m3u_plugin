@@ -20,34 +20,25 @@
     </div>
 
     <div class="form-group row">
-      <label class="col-sm-3 col-form-label">TiviMate용</label>
+      <label class="col-sm-3 col-form-label">TiviMate/Shyni용</label>
       <div class="col-sm-9">
         <div class="input-group">
           <a href="{{ arg['m3u_tivimate_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_tivimate_url'] }}</a>
         </div>
-        <small class="form-text text-muted">TVH 계정을 노출하지 않고 이 서버가 인증·중계하는 TiviMate용 링크</small>
-      </div>
-    </div>
-
-    <div class="form-group row">
-      <label class="col-sm-3 col-form-label">Shyni용</label>
-      <div class="col-sm-9">
-        <div class="input-group">
-          <a href="{{ arg['m3u_shyni_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_shyni_url'] }}</a>
-        </div>
-        <small class="form-text text-muted">ALIVE 호환 형식으로 생성하며 TVH 계정을 노출하지 않고 이 서버가 실시간으로 중계하는 Shyni 전용 링크</small>
+        <small class="form-text text-muted">TVH 계정을 노출하지 않고 실제 HLS로 포장하여 TiviMate와 Shyni에서 함께 사용하는 링크</small>
+        <small class="form-text text-muted">채널 재생 중에는 FFmpeg가 실행되며 마지막 요청 후 약 60초가 지나면 자동 종료됩니다.</small>
         <div class="mt-2">
-          <button type="button" class="btn btn-outline-primary" id="shyni_fix_url_btn" data-url="{{ arg['shyni_fix_url_yaml_url'] }}">ALIVE 고정주소 설정 출력</button>
+          <button type="button" class="btn btn-outline-primary" id="alive_fix_url_btn" data-url="{{ arg['alive_fix_url_yaml_url'] }}">ALIVE 고정주소 설정 출력</button>
         </div>
       </div>
     </div>
 
-    <div id="shyni_fix_url_wrap" class="form-group row" style="display:none;">
+    <div id="alive_fix_url_wrap" class="form-group row" style="display:none;">
       <label class="col-sm-3 col-form-label">고정주소 전체 YAML</label>
       <div class="col-sm-9">
-        <textarea id="shyni_fix_url_output" class="form-control" rows="18" readonly spellcheck="false" style="font-family:monospace;"></textarea>
+        <textarea id="alive_fix_url_output" class="form-control" rows="18" readonly spellcheck="false" style="font-family:monospace;"></textarea>
         <div class="mt-2">
-          <button type="button" class="btn btn-primary" id="shyni_fix_url_copy_btn">전체 복사</button>
+          <button type="button" class="btn btn-primary" id="alive_fix_url_copy_btn">전체 복사</button>
         </div>
         <small class="form-text text-muted">ALIVE의 편집 화면에서 alive.yaml 맨 아래에 통째로 붙여넣으세요. 이미 channel_source 항목이 있다면 기존 항목을 삭제한 뒤 붙여넣으세요. 출력 내용에는 재생용 API 키가 포함되므로 외부에 공개하지 마세요.</small>
       </div>
@@ -70,12 +61,12 @@
     </div>
 
     <div class="form-group row">
-      <label class="col-sm-3 col-form-label">TiviMate용 EPG</label>
+      <label class="col-sm-3 col-form-label">TiviMate/Shyni용 EPG</label>
       <div class="col-sm-9">
         <div class="input-group">
           <a href="{{ arg['epg_tivimate_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['epg_tivimate_url'] }}</a>
         </div>
-        <small class="form-text text-muted">내부 로고 주소로 재가공한 TiviMate용 EPG XML</small>
+        <small class="form-text text-muted">내부 로고 주소로 재가공한 TiviMate/Shyni 공용 EPG XML</small>
       </div>
     </div>
 

@@ -177,7 +177,7 @@ $(document).ready(function(){
   updateDliveEpgToggleState();
 });
 
-$("body").on('click', '#shyni_fix_url_btn', function(e){
+$("body").on('click', '#alive_fix_url_btn', function(e){
   e.preventDefault();
   var $btn = $(this);
   var url = String($btn.data('url') || '');
@@ -193,13 +193,13 @@ $("body").on('click', '#shyni_fix_url_btn', function(e){
     cache: false,
     dataType: 'text',
     success: function(text) {
-      $('#shyni_fix_url_output').val(text || '');
-      $('#shyni_fix_url_wrap').show();
+      $('#alive_fix_url_output').val(text || '');
+      $('#alive_fix_url_wrap').show();
       notify('ALIVE 고정주소 설정을 생성했습니다.', 'success');
     },
     error: function(xhr) {
-      $('#shyni_fix_url_output').val('생성 실패\n' + (xhr.responseText || ''));
-      $('#shyni_fix_url_wrap').show();
+      $('#alive_fix_url_output').val('생성 실패\n' + (xhr.responseText || ''));
+      $('#alive_fix_url_wrap').show();
       notify('고정주소 설정 생성 실패', 'danger');
     },
     complete: function() {
@@ -208,9 +208,9 @@ $("body").on('click', '#shyni_fix_url_btn', function(e){
   });
 });
 
-$("body").on('click', '#shyni_fix_url_copy_btn', function(e){
+$("body").on('click', '#alive_fix_url_copy_btn', function(e){
   e.preventDefault();
-  var $textarea = $('#shyni_fix_url_output');
+  var $textarea = $('#alive_fix_url_output');
   var text = String($textarea.val() || '');
   if (!text) {
     notify('먼저 고정주소 설정을 출력하세요.', 'warning');

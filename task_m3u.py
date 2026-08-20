@@ -130,7 +130,7 @@ class TaskM3U(TaskBase):
         return url
 
     @staticmethod
-    def build_alive_stream_url(base_url, api_key, channel_uuid):
+    def build_proxy_stream_url(base_url, api_key, channel_uuid, use_hls=False):
         base_url = str(base_url or '').rstrip('/')
         channel_uuid = str(channel_uuid or '').strip()
         query = [
@@ -140,17 +140,26 @@ class TaskM3U(TaskBase):
         ]
         if api_key:
             query.append(('apikey', str(api_key).strip()))
-        return f'{base_url}/{P.package_name}/api/stream.ts?{urlencode(query)}'
+        endpoint = 'url.m3u8' if use_hls else 'stream.ts'
+        return f'{base_url}/{P.package_name}/api/{endpoint}?{urlencode(query)}'
+
+    @staticmethod
+    def build_alive_stream_url(base_url, api_key, channel_uuid):
+        return TaskM3U.build_proxy_stream_url(
+            base_url,
+            api_key,
+            channel_uuid,
+            use_hls=True,
+        )
 
     @staticmethod
     def resolve_alive_stream(channel_uuid):
-        channel_uuid = str(channel_uuid or '').strip()
-        if not channel_uuid or len(channel_uuid) > 128:
-            return {'ret': 'warning', 'status': 400, 'msg': 'invalid channel'}
+        validated = TaskM3U.validate_alive_stream_channel(channel_uuid)
+        if validated.get('ret') != 'success':
+            return validated
 
-        channel = ModelChannel.get_channel_map().get(channel_uuid)
-        if channel is None or not bool(channel.enabled):
-            return {'ret': 'warning', 'status': 404, 'msg': 'channel not found'}
+        channel_uuid = validated.get('channel_uuid')
+        channel = validated.get('channel')
 
         source_url = TaskM3U.fetch_playlist_map().get(channel_uuid, '')
         if not source_url:
@@ -171,6 +180,21 @@ class TaskM3U(TaskBase):
             'channel_uuid': channel_uuid,
             'channel_name': str(channel.name or '').strip(),
             'upstream_url': upstream_url,
+        }
+
+    @staticmethod
+    def validate_alive_stream_channel(channel_uuid):
+        channel_uuid = str(channel_uuid or '').strip()
+        if not channel_uuid or len(channel_uuid) > 128:
+            return {'ret': 'warning', 'status': 400, 'msg': 'invalid channel'}
+
+        channel = ModelChannel.get_channel_map().get(channel_uuid)
+        if channel is None or not bool(channel.enabled):
+            return {'ret': 'warning', 'status': 404, 'msg': 'channel not found'}
+        return {
+            'ret': 'success',
+            'channel_uuid': channel_uuid,
+            'channel': channel,
         }
 
     @staticmethod
@@ -1627,7 +1651,7 @@ class TaskM3U(TaskBase):
             f'group-title="{group_name}"',
         ]
 
-        if target in ['tivimate', 'shyni'] and logo_url:
+        if target == 'tivimate' and logo_url:
             attrs.append(f'tvg-logo="{logo_url}"')
 
         return f'#EXTINF:-1 {" ".join(attrs)},{tvg_name_text}'
@@ -1636,7 +1660,7 @@ class TaskM3U(TaskBase):
     def build_m3u(target='tivimate', proxy_base_url='', proxy_apikey=''):
         try:
             target = str(target or 'tivimate').strip().lower()
-            if target not in ['tvh', 'tivimate', 'shyni']:
+            if target not in ['tvh', 'tivimate']:
                 target = 'tivimate'
 
             logger.info(f'[ff_tvh_m3u] build_m3u start target={target}')
@@ -1681,10 +1705,11 @@ class TaskM3U(TaskBase):
                         skipped_no_playlist += 1
                         continue
 
-                    stream_url = TaskM3U.build_alive_stream_url(
+                    stream_url = TaskM3U.build_proxy_stream_url(
                         proxy_base_url,
                         proxy_apikey,
                         channel_uuid,
+                        use_hls=(target == 'tivimate'),
                     )
                     if not stream_url:
                         skipped_empty_url += 1
@@ -1716,7 +1741,7 @@ class TaskM3U(TaskBase):
             return '#EXTM3U\n'
 
     @staticmethod
-    def build_shyni_fix_url_yaml(proxy_base_url='', proxy_apikey=''):
+    def build_alive_fix_url_yaml(proxy_base_url='', proxy_apikey=''):
         try:
             grouped_rows = ModelChannel.get_grouped()
             playlist_map = TaskM3U.fetch_playlist_map()
@@ -1759,7 +1784,7 @@ class TaskM3U(TaskBase):
             lines.extend(entry_lines)
             return '\n'.join(lines) + '\n'
         except Exception as e:
-            logger.exception(f'[ff_tvh_m3u] build_shyni_fix_url_yaml exception: {str(e)}')
+            logger.exception(f'[ff_tvh_m3u] build_alive_fix_url_yaml exception: {str(e)}')
             return 'channel_source:\n  fix_url: {}\n'
 
     @staticmethod
@@ -1818,18 +1843,14 @@ class TaskM3U(TaskBase):
             target = str(target or 'tivimate').strip().lower()
             if target == 'tvh':
                 return f'{base_url}/{P.package_name}/api/m3u_tvh'
-            if target == 'shyni':
-                return f'{base_url}/{P.package_name}/api/m3u_shyni'
-            if target == 'tivimate':
+            if target in ['tivimate', 'shyni']:
                 return f'{base_url}/{P.package_name}/api/m3u_tivimate'
             return f'{base_url}/{P.package_name}/api/m3u'
         except Exception as e:
             logger.exception(f'[ff_tvh_m3u] get_m3u_url exception: {str(e)}')
             if str(target or '').strip().lower() == 'tvh':
                 return f'/{P.package_name}/api/m3u_tvh'
-            if str(target or '').strip().lower() == 'shyni':
-                return f'/{P.package_name}/api/m3u_shyni'
-            if str(target or '').strip().lower() == 'tivimate':
+            if str(target or '').strip().lower() in ['tivimate', 'shyni']:
                 return f'/{P.package_name}/api/m3u_tivimate'
             return f'/{P.package_name}/api/m3u'
 
