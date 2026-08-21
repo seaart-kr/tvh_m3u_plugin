@@ -1675,6 +1675,7 @@ class ModuleBasic(PluginModuleBase):
             arg['m3u_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u")
             arg['m3u_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tvh")
             arg['m3u_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tivimate")
+            arg['m3u_shyni_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_shyni")
             arg['alive_fix_url_yaml_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/alive_fix_url.yaml")
             arg['epg_raw_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_raw")
             arg['epg_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tvh")
@@ -2013,6 +2014,22 @@ class ModuleBasic(PluginModuleBase):
                     mimetype='audio/x-mpegurl',
                     headers={
                         'Content-Disposition': 'inline; filename=tivimate_shyni_channels.m3u',
+                        'Cache-Control': 'no-store',
+                    },
+                )
+
+            elif sub == 'm3u_shyni':
+                text = Task.build_m3u(
+                    target='shyni',
+                    proxy_base_url=request.host_url.rstrip('/'),
+                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    consumer_id=_get_hls_consumer_id(req),
+                )
+                return Response(
+                    text,
+                    mimetype='audio/x-mpegurl',
+                    headers={
+                        'Content-Disposition': 'inline; filename=shyni_hls_channels.m3u',
                         'Cache-Control': 'no-store',
                     },
                 )

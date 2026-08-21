@@ -20,13 +20,23 @@
     </div>
 
     <div class="form-group row">
-      <label class="col-sm-3 col-form-label">TiviMate/Shyni용</label>
+      <label class="col-sm-3 col-form-label">TiviMate용</label>
       <div class="col-sm-9">
         <div class="input-group">
           <a href="{{ arg['m3u_tivimate_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_tivimate_url'] }}</a>
         </div>
-        <small class="form-text text-muted">TVH 계정을 노출하지 않고 실제 HLS로 포장하여 TiviMate와 Shyni에서 함께 사용하는 링크</small>
-        <small class="form-text text-muted">채널 재생 중에는 FFmpeg가 실행되며 마지막 요청 후 약 60초가 지나면 자동 종료됩니다.</small>
+        <small class="form-text text-muted">기존 방식대로 각 채널 URL에 재생 ID와 비밀번호를 포함한 TVH 직접 재생 링크</small>
+      </div>
+    </div>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">Shyni HLS용</label>
+      <div class="col-sm-9">
+        <div class="input-group">
+          <a href="{{ arg['m3u_shyni_url'] }}" target="_blank" rel="noopener noreferrer">{{ arg['m3u_shyni_url'] }}</a>
+        </div>
+        <small class="form-text text-muted">TVH 계정을 노출하지 않고 FFmpeg로 HLS 포장하여 Shyni에서 사용하는 전용 링크</small>
+        <small class="form-text text-muted">마지막 재생목록·조각 요청이 끝나면 설정된 유휴 종료 시간 후 상위 스트림도 종료됩니다.</small>
         <div class="mt-2">
           <button type="button" class="btn btn-outline-primary" id="alive_fix_url_btn" data-url="{{ arg['alive_fix_url_yaml_url'] }}">ALIVE 고정주소 설정 출력</button>
         </div>

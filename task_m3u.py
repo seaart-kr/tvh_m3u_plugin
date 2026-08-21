@@ -1654,7 +1654,7 @@ class TaskM3U(TaskBase):
             f'group-title="{group_name}"',
         ]
 
-        if target == 'tivimate' and logo_url:
+        if target in ['tivimate', 'shyni'] and logo_url:
             attrs.append(f'tvg-logo="{logo_url}"')
 
         return f'#EXTINF:-1 {" ".join(attrs)},{tvg_name_text}'
@@ -1663,7 +1663,7 @@ class TaskM3U(TaskBase):
     def build_m3u(target='tivimate', proxy_base_url='', proxy_apikey='', consumer_id=''):
         try:
             target = str(target or 'tivimate').strip().lower()
-            if target not in ['tvh', 'tivimate']:
+            if target not in ['tvh', 'tivimate', 'shyni']:
                 target = 'tivimate'
 
             logger.info(f'[ff_tvh_m3u] build_m3u start target={target}')
@@ -1708,13 +1708,21 @@ class TaskM3U(TaskBase):
                         skipped_no_playlist += 1
                         continue
 
-                    stream_url = TaskM3U.build_proxy_stream_url(
-                        proxy_base_url,
-                        proxy_apikey,
-                        channel_uuid,
-                        use_hls=(target == 'tivimate'),
-                        consumer_id=consumer_id,
-                    )
+                    if target == 'tivimate':
+                        effective_profile = TaskM3U.get_effective_profile(channel_uuid, group_name)
+                        stream_url = TaskM3U.normalize_stream_url(
+                            source_url,
+                            effective_profile,
+                            include_auth=True,
+                        )
+                    else:
+                        stream_url = TaskM3U.build_proxy_stream_url(
+                            proxy_base_url,
+                            proxy_apikey,
+                            channel_uuid,
+                            use_hls=(target == 'shyni'),
+                            consumer_id=consumer_id,
+                        )
                     if not stream_url:
                         skipped_empty_url += 1
                         continue
@@ -1848,15 +1856,19 @@ class TaskM3U(TaskBase):
             target = str(target or 'tivimate').strip().lower()
             if target == 'tvh':
                 return f'{base_url}/{P.package_name}/api/m3u_tvh'
-            if target in ['tivimate', 'shyni']:
+            if target == 'tivimate':
                 return f'{base_url}/{P.package_name}/api/m3u_tivimate'
+            if target == 'shyni':
+                return f'{base_url}/{P.package_name}/api/m3u_shyni'
             return f'{base_url}/{P.package_name}/api/m3u'
         except Exception as e:
             logger.exception(f'[ff_tvh_m3u] get_m3u_url exception: {str(e)}')
             if str(target or '').strip().lower() == 'tvh':
                 return f'/{P.package_name}/api/m3u_tvh'
-            if str(target or '').strip().lower() in ['tivimate', 'shyni']:
+            if str(target or '').strip().lower() == 'tivimate':
                 return f'/{P.package_name}/api/m3u_tivimate'
+            if str(target or '').strip().lower() == 'shyni':
+                return f'/{P.package_name}/api/m3u_shyni'
             return f'/{P.package_name}/api/m3u'
 
     @staticmethod
