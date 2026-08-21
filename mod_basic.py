@@ -72,6 +72,63 @@ def _save_runtime_settings(req):
         logger.warning(f'[ff_tvh_m3u] runtime setting_save skipped: {str(e)}')
     return result
 
+def _get_hls_runtime_options():
+    def _int_setting(key, default, minimum, maximum):
+        try:
+            return max(minimum, min(int(P.ModelSetting.get(key) or default), maximum))
+        except (TypeError, ValueError):
+            return default
+
+    def _float_setting(key, default, minimum, maximum):
+        try:
+            return max(minimum, min(float(P.ModelSetting.get(key) or default), maximum))
+        except (TypeError, ValueError):
+            return default
+
+    limit_policy = str(P.ModelSetting.get('basic_hls_limit_policy') or 'reject').strip().lower()
+    if limit_policy not in ['reject', 'oldest']:
+        limit_policy = 'reject'
+    consumer_mode = str(P.ModelSetting.get('basic_hls_consumer_mode') or 'shared').strip().lower()
+    if consumer_mode not in ['shared', 'single']:
+        consumer_mode = 'shared'
+
+    return {
+        'max_streams': _int_setting('basic_hls_max_streams', 0, 0, 64),
+        'limit_policy': limit_policy,
+        'consumer_mode': consumer_mode,
+        'idle_timeout': _int_setting('basic_hls_idle_timeout', 15, 5, 600),
+        'switch_delay': _float_setting('basic_hls_switch_delay', 0.5, 0.0, 5.0),
+    }
+
+
+def _configure_hls_manager():
+    return HLSManager.configure(**_get_hls_runtime_options())
+
+
+def _get_hls_consumer_id(req=None, runtime_options=None):
+    req = req or request
+    value = ''
+    try:
+        value = str(req.args.get('client') or '').strip()
+    except Exception:
+        value = ''
+    if value and len(value) <= 64 and re.fullmatch(r'[A-Za-z0-9_-]+', value):
+        return value
+    if not isinstance(runtime_options, dict):
+        runtime_options = _get_hls_runtime_options()
+    if runtime_options.get('consumer_mode') == 'single':
+        return 'default'
+    return ''
+
+
+def _hls_setting_arg_defaults(arg):
+    arg.setdefault('basic_hls_max_streams', '0')
+    arg.setdefault('basic_hls_limit_policy', 'reject')
+    arg.setdefault('basic_hls_consumer_mode', 'shared')
+    arg.setdefault('basic_hls_idle_timeout', '15')
+    arg.setdefault('basic_hls_switch_delay', '0.5')
+    return arg
+
 
 def _load_sjva_module():
     for mod_name in ['sjva.setup', 'sjva']:
@@ -1544,6 +1601,11 @@ class ModuleBasic(PluginModuleBase):
         'basic_tvh_play_username': '',
         'basic_tvh_play_password': '',
         'basic_tvh_stream_profile': '',
+        'basic_hls_max_streams': '0',
+        'basic_hls_limit_policy': 'reject',
+        'basic_hls_consumer_mode': 'shared',
+        'basic_hls_idle_timeout': '15',
+        'basic_hls_switch_delay': '0.5',
         'basic_tvh_include_auth_in_url': 'False',
         'basic_tvh_use_verify_ssl': 'True',
         'basic_last_sync_time': '',
@@ -1603,6 +1665,7 @@ class ModuleBasic(PluginModuleBase):
             logger.debug(f'[ff_tvh_m3u] dedicated db path = {DB_PATH}')
 
             arg = P.ModelSetting.to_dict()
+            _hls_setting_arg_defaults(arg)
             # Never render stored TVH passwords back into the browser.
             arg['basic_tvh_admin_password'] = ''
             arg['basic_tvh_play_password'] = ''
@@ -1887,6 +1950,7 @@ class ModuleBasic(PluginModuleBase):
                 text = Task.build_m3u(
                     target=target,
                     proxy_base_url=request.host_url.rstrip('/'),
+                    consumer_id=_get_hls_consumer_id(req),
                 )
                 preview = '\n'.join(text.splitlines()[:1000])
                 return jsonify({'ret': 'success', 'preview': preview, 'msg': f'M3U 미리보기 생성 완료 ({target})'})
@@ -1917,6 +1981,7 @@ class ModuleBasic(PluginModuleBase):
                     target='tivimate',
                     proxy_base_url=request.host_url.rstrip('/'),
                     proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    consumer_id=_get_hls_consumer_id(req),
                 )
                 return Response(
                     text,
@@ -1941,6 +2006,7 @@ class ModuleBasic(PluginModuleBase):
                     target='tivimate',
                     proxy_base_url=request.host_url.rstrip('/'),
                     proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    consumer_id=_get_hls_consumer_id(req),
                 )
                 return Response(
                     text,
@@ -1955,6 +2021,7 @@ class ModuleBasic(PluginModuleBase):
                 text = Task.build_alive_fix_url_yaml(
                     proxy_base_url=request.host_url.rstrip('/'),
                     proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    consumer_id=_get_hls_consumer_id(req),
                 )
                 return Response(
                     text,
@@ -1972,6 +2039,8 @@ class ModuleBasic(PluginModuleBase):
                     return Response('invalid source', status=400, mimetype='text/plain')
 
                 channel_uuid = str(request.args.get('i') or '').strip()
+                hls_options = _configure_hls_manager()
+                consumer_id = _get_hls_consumer_id(req, runtime_options=hls_options)
                 validated = Task.validate_alive_stream_channel(channel_uuid)
                 if validated.get('ret') != 'success':
                     return Response(
@@ -1980,7 +2049,7 @@ class ModuleBasic(PluginModuleBase):
                         mimetype='text/plain',
                     )
 
-                cached_playlist = HLSManager.get_playlist(channel_uuid)
+                cached_playlist = HLSManager.get_playlist(channel_uuid, consumer_id=consumer_id)
                 if cached_playlist:
                     hls = {'ret': 'success', 'playlist': cached_playlist}
                 else:
@@ -1996,6 +2065,7 @@ class ModuleBasic(PluginModuleBase):
                         resolved.get('upstream_url'),
                         username=Task.get_play_username(),
                         password=Task.get_play_password(),
+                        consumer_id=consumer_id,
                     )
                 if hls.get('ret') != 'success':
                     return Response(
@@ -2018,6 +2088,8 @@ class ModuleBasic(PluginModuleBase):
                         ]
                         if api_key:
                             query.append(('apikey', api_key))
+                        if consumer_id:
+                            query.append(('client', consumer_id))
                         line = (
                             f'{request.host_url.rstrip("/")}/{P.package_name}/api/'
                             f'hls_segment.ts?{urlencode(query)}'
@@ -2038,9 +2110,14 @@ class ModuleBasic(PluginModuleBase):
                     return Response('invalid mode', status=400, mimetype='text/plain')
                 if str(request.args.get('s') or '').strip().lower() != 'tvh':
                     return Response('invalid source', status=400, mimetype='text/plain')
+                consumer_id = _get_hls_consumer_id(
+                    req,
+                    runtime_options={'consumer_mode': HLSManager.CONSUMER_MODE},
+                )
                 segment = HLSManager.read_segment(
                     request.args.get('i'),
                     request.args.get('f'),
+                    consumer_id=consumer_id,
                 )
                 if segment is None:
                     return Response('segment not found', status=404, mimetype='text/plain')

@@ -45,6 +45,14 @@ class HLSManagerTest(unittest.TestCase):
         self.original_root = self.manager.CACHE_ROOT
         self.manager.CACHE_ROOT = self.temp.name
         self.manager._streams = {}
+        self.manager._consumer_channels = {}
+        self.manager.configure(
+            max_streams=0,
+            limit_policy='reject',
+            consumer_mode='shared',
+            idle_timeout=15,
+            switch_delay=0,
+        )
 
     def tearDown(self):
         self.manager.shutdown_all()
@@ -103,6 +111,122 @@ class HLSManagerTest(unittest.TestCase):
 
         self.assertEqual(self.manager.get_playlist('channel-uuid'), playlist)
         self.assertEqual(self.manager._streams, {})
+
+    def test_cached_playlist_registers_single_consumer_channel(self):
+        self.manager.configure(consumer_mode='single', switch_delay=0)
+        directory = self.manager._stream_dir('channel-uuid')
+        os.makedirs(directory, exist_ok=True)
+        playlist = '#EXTM3U\n#EXTINF:2.0,\nsegment_000000001.ts\n'
+        Path(directory, 'index.m3u8').write_text(playlist, encoding='utf-8')
+
+        self.assertEqual(
+            self.manager.get_playlist('channel-uuid', consumer_id='living-room'),
+            playlist,
+        )
+        self.assertEqual(self.manager._consumer_channels['living-room'], 'channel-uuid')
+
+    @staticmethod
+    def _live_state(channel_uuid, last_access=0, consumers=None):
+        process = mock.Mock()
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        return {
+            'channel_uuid': channel_uuid,
+            'process': process,
+            'directory': '',
+            'last_access': last_access,
+            'consumers': set(consumers or []),
+        }
+
+    def test_configure_validates_runtime_limits(self):
+        configured = self.manager.configure(
+            max_streams='999',
+            limit_policy='invalid',
+            consumer_mode='invalid',
+            idle_timeout='1',
+            switch_delay='99',
+        )
+
+        self.assertEqual(configured['max_streams'], 64)
+        self.assertEqual(configured['limit_policy'], 'reject')
+        self.assertEqual(configured['consumer_mode'], 'shared')
+        self.assertEqual(configured['idle_timeout'], 5)
+        self.assertEqual(configured['switch_delay'], 5.0)
+
+    def test_single_consumer_switch_detaches_previous_channel(self):
+        self.manager.configure(
+            max_streams=1,
+            limit_policy='oldest',
+            consumer_mode='single',
+            switch_delay=0,
+        )
+        previous = self._live_state('old-channel', consumers={'living-room'})
+        self.manager._streams = {'old-channel': previous}
+        self.manager._consumer_channels = {'living-room': 'old-channel'}
+
+        _state, states_to_stop, error = self.manager._prepare_request_locked(
+            'new-channel',
+            'living-room',
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(states_to_stop, [previous])
+        self.assertNotIn('old-channel', self.manager._streams)
+        self.assertEqual(self.manager._consumer_channels['living-room'], 'new-channel')
+
+    def test_single_consumer_switch_preserves_other_viewers(self):
+        self.manager.configure(consumer_mode='single', switch_delay=0)
+        previous = self._live_state(
+            'shared-channel',
+            consumers={'living-room', 'bedroom'},
+        )
+        self.manager._streams = {'shared-channel': previous}
+        self.manager._consumer_channels = {
+            'living-room': 'shared-channel',
+            'bedroom': 'shared-channel',
+        }
+
+        _state, states_to_stop, error = self.manager._prepare_request_locked(
+            'new-channel',
+            'living-room',
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(states_to_stop, [])
+        self.assertIn('shared-channel', self.manager._streams)
+        self.assertEqual(previous['consumers'], {'bedroom'})
+        self.assertEqual(self.manager._consumer_channels['bedroom'], 'shared-channel')
+
+    def test_stream_limit_can_reject_or_evict_oldest(self):
+        first = self._live_state('first', last_access=1)
+        second = self._live_state('second', last_access=2)
+        self.manager._streams = {'first': first, 'second': second}
+        self.manager.configure(max_streams=2, limit_policy='reject', switch_delay=0)
+
+        _state, states_to_stop, error = self.manager._prepare_request_locked('third', '')
+        self.assertEqual(states_to_stop, [])
+        self.assertEqual(error['status'], 429)
+
+        self.manager.configure(max_streams=2, limit_policy='oldest', switch_delay=0)
+        _state, states_to_stop, error = self.manager._prepare_request_locked('third', '')
+        self.assertIsNone(error)
+        self.assertEqual(states_to_stop, [first])
+        self.assertNotIn('first', self.manager._streams)
+
+    def test_stale_single_consumer_segment_is_rejected(self):
+        self.manager.configure(consumer_mode='single', switch_delay=0)
+        self.manager._consumer_channels = {'living-room': 'new-channel'}
+        directory = self.manager._stream_dir('old-channel')
+        os.makedirs(directory, exist_ok=True)
+        Path(directory, 'segment_000000001.ts').write_bytes(b'old-video')
+
+        self.assertIsNone(
+            self.manager.read_segment(
+                'old-channel',
+                'segment_000000001.ts',
+                consumer_id='living-room',
+            )
+        )
 
 
 if __name__ == '__main__':

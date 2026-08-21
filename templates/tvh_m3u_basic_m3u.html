@@ -49,6 +49,57 @@
     <div class="alert alert-info">재생 계정은 서버 내부 TVH 인증에만 사용되며 M3U에는 포함되지 않습니다. TVH용과 TiviMate/Shyni용 재생은 모두 이 서버를 경유합니다.</div>
 
     {{ macros.m_hr() }}
+    <h5>HLS 입력 스트림 관리</h5>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">사용 유형</label>
+      <div class="col-sm-9">
+        <select class="form-control" id="basic_hls_consumer_mode" name="basic_hls_consumer_mode">
+          <option value="shared" {% if arg.get('basic_hls_consumer_mode', 'shared') == 'shared' %}selected{% endif %}>TVH/미디어 서버·다중 시청</option>
+          <option value="single" {% if arg.get('basic_hls_consumer_mode', 'shared') == 'single' %}selected{% endif %}>TiviMate 단일 플레이어</option>
+        </select>
+        <small class="form-text text-muted">단일 플레이어는 새 채널 요청 시 같은 소비자의 이전 HLS 입력을 먼저 종료합니다. TVH나 Shyni처럼 여러 채널을 동시에 사용할 수 있으면 다중 시청을 선택하세요.</small>
+      </div>
+    </div>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">동시 HLS 입력 제한</label>
+      <div class="col-sm-9">
+        <input type="number" min="0" max="64" step="1" class="form-control" id="basic_hls_max_streams" name="basic_hls_max_streams" value="{{ arg.get('basic_hls_max_streams', '0') }}">
+        <small class="form-text text-muted">0은 제한 없음입니다. HomeRun·USB 튜너·IPTV 계정 등 상위 입력이 하나뿐이면 1로 설정하세요.</small>
+      </div>
+    </div>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">제한 도달 시</label>
+      <div class="col-sm-9">
+        <select class="form-control" id="basic_hls_limit_policy" name="basic_hls_limit_policy">
+          <option value="reject" {% if arg.get('basic_hls_limit_policy', 'reject') == 'reject' %}selected{% endif %}>기존 시청 우선</option>
+          <option value="oldest" {% if arg.get('basic_hls_limit_policy', 'reject') == 'oldest' %}selected{% endif %}>새 요청 우선</option>
+        </select>
+        <small class="form-text text-muted">기존 시청 우선은 새 요청을 거절하고, 새 요청 우선은 가장 오래 사용하지 않은 HLS 입력을 종료합니다.</small>
+      </div>
+    </div>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">유휴 종료 시간</label>
+      <div class="col-sm-9">
+        <input type="number" min="5" max="600" step="1" class="form-control" id="basic_hls_idle_timeout" name="basic_hls_idle_timeout" value="{{ arg.get('basic_hls_idle_timeout', '15') }}">
+        <small class="form-text text-muted">마지막 재생목록·조각 요청 후 HLS 입력을 유지할 시간(초)입니다. 권장값은 15초입니다.</small>
+      </div>
+    </div>
+
+    <div class="form-group row">
+      <label class="col-sm-3 col-form-label">채널 전환 대기</label>
+      <div class="col-sm-9">
+        <input type="number" min="0" max="5" step="0.1" class="form-control" id="basic_hls_switch_delay" name="basic_hls_switch_delay" value="{{ arg.get('basic_hls_switch_delay', '0.5') }}">
+        <small class="form-text text-muted">이전 FFmpeg 종료 후 상위 TVH·튜너가 입력을 반환하도록 기다리는 시간(초)입니다.</small>
+      </div>
+    </div>
+
+    <div class="alert alert-warning">이 설정은 TiviMate/Shyni용 HLS에만 적용됩니다. TVH용 M3U의 MPEG-TS 중계에는 적용되지 않습니다.</div>
+
+    {{ macros.m_hr() }}
 
     <h5>그룹 / 채널별 재생 프로필</h5>
     <div class="ff-group-help">우선순위는 <strong>채널 프로필 &gt; 그룹 프로필 &gt; 일괄 프로필 적용 프로필</strong>입니다. 그룹명 더블클릭으로 펼침/접힘 할 수 있고, 적용 버튼을 누르면 저장 후 바로 미리보기가 갱신됩니다.</div>

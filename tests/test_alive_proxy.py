@@ -20,6 +20,12 @@ class AliveProxyTest(unittest.TestCase):
                 'PUBLICKEY1',
                 'channel-uuid',
             )
+            session_url = task.build_alive_stream_url(
+                'https://oracle.example',
+                'PUBLICKEY1',
+                'channel-uuid',
+                consumer_id='living-room',
+            )
             raw_url = task.build_proxy_stream_url(
                 'https://oracle.example',
                 'PUBLICKEY1',
@@ -38,6 +44,8 @@ class AliveProxyTest(unittest.TestCase):
             '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1',
         )
         self.assertNotIn('@', url)
+        self.assertIn('&client=living-room', session_url)
+        self.assertNotIn('client=', raw_url)
 
         self.assertIn('/api/stream.ts?', raw_url)
         self.assertNotIn('@', raw_url)
@@ -103,6 +111,9 @@ class AliveProxyTest(unittest.TestCase):
         self.assertIn('hls_segment.ts', sub_values)
         self.assertIn('HLSManager.ensure_stream(', source)
         self.assertIn('HLSManager.read_segment(', source)
+        self.assertIn('_configure_hls_manager()', source)
+        self.assertIn('consumer_id=consumer_id', source)
+        self.assertIn("query.append(('client', consumer_id))", source)
         self.assertIn("content_type='video/mp2t'", source)
         self.assertIn("allow_redirects=False", source)
         self.assertIn("response.headers['X-Accel-Buffering'] = 'no'", source)

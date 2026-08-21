@@ -130,7 +130,7 @@ class TaskM3U(TaskBase):
         return url
 
     @staticmethod
-    def build_proxy_stream_url(base_url, api_key, channel_uuid, use_hls=False):
+    def build_proxy_stream_url(base_url, api_key, channel_uuid, use_hls=False, consumer_id=''):
         base_url = str(base_url or '').rstrip('/')
         channel_uuid = str(channel_uuid or '').strip()
         query = [
@@ -140,16 +140,19 @@ class TaskM3U(TaskBase):
         ]
         if api_key:
             query.append(('apikey', str(api_key).strip()))
+        if use_hls and consumer_id:
+            query.append(('client', str(consumer_id).strip()))
         endpoint = 'url.m3u8' if use_hls else 'stream.ts'
         return f'{base_url}/{P.package_name}/api/{endpoint}?{urlencode(query)}'
 
     @staticmethod
-    def build_alive_stream_url(base_url, api_key, channel_uuid):
+    def build_alive_stream_url(base_url, api_key, channel_uuid, consumer_id=''):
         return TaskM3U.build_proxy_stream_url(
             base_url,
             api_key,
             channel_uuid,
             use_hls=True,
+            consumer_id=consumer_id,
         )
 
     @staticmethod
@@ -1657,7 +1660,7 @@ class TaskM3U(TaskBase):
         return f'#EXTINF:-1 {" ".join(attrs)},{tvg_name_text}'
 
     @staticmethod
-    def build_m3u(target='tivimate', proxy_base_url='', proxy_apikey=''):
+    def build_m3u(target='tivimate', proxy_base_url='', proxy_apikey='', consumer_id=''):
         try:
             target = str(target or 'tivimate').strip().lower()
             if target not in ['tvh', 'tivimate']:
@@ -1710,6 +1713,7 @@ class TaskM3U(TaskBase):
                         proxy_apikey,
                         channel_uuid,
                         use_hls=(target == 'tivimate'),
+                        consumer_id=consumer_id,
                     )
                     if not stream_url:
                         skipped_empty_url += 1
@@ -1741,7 +1745,7 @@ class TaskM3U(TaskBase):
             return '#EXTM3U\n'
 
     @staticmethod
-    def build_alive_fix_url_yaml(proxy_base_url='', proxy_apikey=''):
+    def build_alive_fix_url_yaml(proxy_base_url='', proxy_apikey='', consumer_id=''):
         try:
             grouped_rows = ModelChannel.get_grouped()
             playlist_map = TaskM3U.fetch_playlist_map()
@@ -1770,6 +1774,7 @@ class TaskM3U(TaskBase):
                         proxy_base_url,
                         proxy_apikey,
                         channel_uuid,
+                        consumer_id=consumer_id,
                     )
 
                     entry_lines.append(f'    {json.dumps(channel_uuid, ensure_ascii=False)}:')
