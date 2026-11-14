@@ -14,7 +14,7 @@ from .setup import logger
 
 class HLSManager:
     CACHE_ROOT = '/data/tmp/tvh_m3u_plugin_hls'
-    IDLE_TIMEOUT = 15
+    IDLE_TIMEOUT = 60
     START_TIMEOUT = 15
     CLEANUP_INTERVAL = 3
     PLAYLIST_MAX_AGE = 8
@@ -37,7 +37,7 @@ class HLSManager:
         max_streams=0,
         limit_policy='reject',
         consumer_mode='shared',
-        idle_timeout=15,
+        idle_timeout=60,
         switch_delay=0.5,
     ):
         try:
@@ -45,9 +45,9 @@ class HLSManager:
         except (TypeError, ValueError):
             max_streams = 0
         try:
-            idle_timeout = max(5, min(int(idle_timeout), 600))
+            idle_timeout = max(30, min(int(idle_timeout), 600))
         except (TypeError, ValueError):
-            idle_timeout = 15
+            idle_timeout = 60
         try:
             switch_delay = max(0.0, min(float(switch_delay), 5.0))
         except (TypeError, ValueError):
@@ -307,8 +307,8 @@ class HLSManager:
             '-c', 'copy',
             '-f', 'hls',
             '-hls_time', '2',
-            '-hls_list_size', '6',
-            '-hls_delete_threshold', '2',
+            '-hls_list_size', '30',
+            '-hls_delete_threshold', '30',
             '-hls_flags', 'delete_segments+omit_endlist+independent_segments+temp_file',
             '-hls_segment_filename', os.path.join(directory, 'segment_%09d.ts'),
             os.path.join(directory, 'index.m3u8'),

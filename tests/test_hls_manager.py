@@ -73,6 +73,8 @@ class HLSManagerTest(unittest.TestCase):
         self.assertIn('-c copy', joined)
         self.assertIn('-f hls', joined)
         self.assertIn('-hls_time 2', joined)
+        self.assertIn('-hls_list_size 30', joined)
+        self.assertIn('-hls_delete_threshold 30', joined)
         self.assertIn('delete_segments+omit_endlist+independent_segments+temp_file', joined)
         self.assertIn('Authorization: Basic ', joined)
         self.assertNotIn('viewer:secret@', joined)
@@ -150,7 +152,7 @@ class HLSManagerTest(unittest.TestCase):
         self.assertEqual(configured['max_streams'], 64)
         self.assertEqual(configured['limit_policy'], 'reject')
         self.assertEqual(configured['consumer_mode'], 'shared')
-        self.assertEqual(configured['idle_timeout'], 5)
+        self.assertEqual(configured['idle_timeout'], 30)
         self.assertEqual(configured['switch_delay'], 5.0)
 
     def test_single_consumer_switch_detaches_previous_channel(self):

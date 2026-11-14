@@ -96,7 +96,7 @@ def _get_hls_runtime_options():
         'max_streams': _int_setting('basic_hls_max_streams', 0, 0, 64),
         'limit_policy': limit_policy,
         'consumer_mode': consumer_mode,
-        'idle_timeout': _int_setting('basic_hls_idle_timeout', 15, 5, 600),
+        'idle_timeout': _int_setting('basic_hls_idle_timeout', 60, 30, 600),
         'switch_delay': _float_setting('basic_hls_switch_delay', 0.5, 0.0, 5.0),
     }
 
@@ -125,7 +125,7 @@ def _hls_setting_arg_defaults(arg):
     arg.setdefault('basic_hls_max_streams', '0')
     arg.setdefault('basic_hls_limit_policy', 'reject')
     arg.setdefault('basic_hls_consumer_mode', 'shared')
-    arg.setdefault('basic_hls_idle_timeout', '15')
+    arg.setdefault('basic_hls_idle_timeout', '60')
     arg.setdefault('basic_hls_switch_delay', '0.5')
     return arg
 
@@ -1604,7 +1604,7 @@ class ModuleBasic(PluginModuleBase):
         'basic_hls_max_streams': '0',
         'basic_hls_limit_policy': 'reject',
         'basic_hls_consumer_mode': 'shared',
-        'basic_hls_idle_timeout': '15',
+        'basic_hls_idle_timeout': '60',
         'basic_hls_switch_delay': '0.5',
         'basic_tvh_include_auth_in_url': 'False',
         'basic_tvh_use_verify_ssl': 'True',
