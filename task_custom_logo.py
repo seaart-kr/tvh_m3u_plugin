@@ -259,14 +259,23 @@ def _save_db(source_channel_name, standard_name='', aka_name='', stored_filename
     _ensure_custom_logo_table(cur)
     cols = [row['name'] for row in cur.execute('PRAGMA table_info(custom_logo)').fetchall()]
     now = _now()
+    if not replace_existing:
+        clauses, arguments = [], []
+        if matched_channel_id:
+            for column in ['matched_channel_id', 'channel_master_id', 'channel_id', 'master_id', 'cm_id']:
+                if column in cols:
+                    clauses.append('CAST(' + column + ' AS TEXT) = ?')
+                    arguments.append(matched_channel_id)
+        for column in ['source_channel_name', 'standard_name', 'provider_channel_name', 'channel_name']:
+            if column in cols:
+                clauses.append('(' + column + ' = ? COLLATE NOCASE OR ' + column + ' = ? COLLATE NOCASE)')
+                arguments.extend([source_channel_name, standard_name])
+        if clauses and cur.execute('SELECT 1 FROM custom_logo WHERE ' + ' OR '.join(clauses) + ' LIMIT 1', arguments).fetchone():
+            con.close()
+            return {'matched_channel_id': matched_channel_id, 'standard_name': standard_name,
+                    'logo_url_template': '', 'existing_preserved': True}
     if 'source_channel_name' in cols and 'matched_channel_id' in cols:
-        match = (source_channel_name, matched_channel_id)
-        if not replace_existing:
-            existing = cur.execute("SELECT id FROM custom_logo WHERE source_channel_name = ? AND COALESCE(matched_channel_id, '') = ? LIMIT 1", match).fetchone()
-            if existing:
-                con.close()
-                return {'matched_channel_id': matched_channel_id, 'standard_name': standard_name, 'logo_url_template': '', 'existing_preserved': True}
-        cur.execute("DELETE FROM custom_logo WHERE source_channel_name = ? AND COALESCE(matched_channel_id, '') = ?", match)
+        cur.execute("DELETE FROM custom_logo WHERE source_channel_name = ? AND COALESCE(matched_channel_id, '') = ?", (source_channel_name, matched_channel_id))
     values = {
         'provider': 'custom',
         'source_channel_name': source_channel_name,

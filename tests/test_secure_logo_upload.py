@@ -101,6 +101,9 @@ class SecureLogoUploadTest(unittest.TestCase):
             with sqlite3.connect(self.db) as con:
                 con.execute("UPDATE custom_logo SET stored_filename='owner.png'")
             logos.handle_custom_logo_mirror(req())
+            alias_request = req()
+            alias_request.form = {'source_channel_name': 'Another alias', 'standard_name': 'KBS'}
+            logos.handle_custom_logo_mirror(alias_request)
         self.assertEqual(first['ret'], 'success')
         self.assertTrue((Path(self.temp.name) / first['stored_filename']).read_bytes().startswith(b'\x89PNG'))
         with sqlite3.connect(self.db) as con:
