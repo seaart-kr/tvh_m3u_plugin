@@ -5,13 +5,13 @@ import requests
 
 
 class TaskRemoteBackend(object):
-    BASE_URL = 'https://ff.aha3011.mywire.org/ff_tvh_sheet_write/api/basic'
-    # This key is distributed with the public plugin and must be read-only on
-    # the backend. A private deployment can override it without changing code.
-    PUBLIC_READ_APIKEY = 'TLP1TOGA4P'
+    BASE_URL = 'https://ff.aha3011.mywire.org/tvh_m3u_plugin/normal/catalog'
+    # This distributed capability is accepted only by the read-only catalog.
+    PUBLIC_READ_APIKEY = 'catalog_read_v1_QUDdwvPrn0WyGKiXjK-Ns2LwmjDpq30Xg7q9nJ0VSMs'
     APIKEY = str(os.environ.get('TVH_M3U_REMOTE_APIKEY') or PUBLIC_READ_APIKEY).strip()
     VERIFY_SSL = True
     TIMEOUT = 20
+    READ_RESOURCES = frozenset({'search_master', 'get_aliases', 'match_rules', 'db_dump'})
 
     @staticmethod
     def is_remote_enabled():
@@ -23,19 +23,28 @@ class TaskRemoteBackend(object):
 
     @staticmethod
     def _request(sub, params=None):
-        params = dict(params or {})
-        params['apikey'] = TaskRemoteBackend.APIKEY
+        if sub not in TaskRemoteBackend.READ_RESOURCES:
+            return {'ret': 'danger', 'msg': 'read-only catalog resource required'}
+        params = {k: v for k, v in dict(params or {}).items()
+                  if k in {'keyword', 'limit', 'channel_id'}}
+        params['resource'] = sub
         try:
             resp = requests.get(
-                f"{TaskRemoteBackend.BASE_URL}/{sub}",
+                TaskRemoteBackend.BASE_URL,
                 params=params,
+                headers={'X-Catalog-Key': TaskRemoteBackend.APIKEY},
                 timeout=TaskRemoteBackend.TIMEOUT,
                 verify=TaskRemoteBackend.VERIFY_SSL,
+                allow_redirects=False,
             )
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:
-            return {'ret': 'danger', 'msg': f'remote request failed: {str(e)}'}
+            try:
+                if resp.status_code != 200:
+                    return {'ret': 'danger', 'msg': 'catalog unavailable'}
+                return resp.json()
+            finally:
+                resp.close()
+        except Exception:
+            return {'ret': 'danger', 'msg': 'catalog connection failed'}
 
     @staticmethod
     def search_master_channels(keyword, limit=30):

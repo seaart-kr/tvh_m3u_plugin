@@ -2,11 +2,14 @@
 import os
 import re
 import sqlite3
+import hashlib
+import time
 from datetime import datetime
 
 import requests
 
-from .custom_logo_image import LogoImageError, atomic_write, normalize_logo_image
+from .custom_logo_image import LogoImageError, MAX_INPUT_BYTES, atomic_write, normalize_logo_image
+from .public_access import check_upload_request
 from .setup import P, logger
 from .task_m3u import TaskM3U
 
@@ -147,6 +150,7 @@ def _check_mirror_rate_limit():
     bucket = 'public-upload'
     con = _connect_write_db()
     try:
+        con.execute("BEGIN IMMEDIATE")
         con.execute("""
         CREATE TABLE IF NOT EXISTS custom_logo_upload_rate (
             upload_day TEXT NOT NULL,
@@ -177,11 +181,32 @@ def _check_mirror_rate_limit():
         con.close()
 
 
-def _save_file(file_storage, output_dir=None, enforce_queue_limits=False):
+def _check_mirror_attempt_limit(remote_addr):
+    identity = hashlib.sha256(str(remote_addr or 'unknown').encode()).hexdigest()
+    bucket = int(time.time() // 600)
+    con = _connect_write_db()
+    try:
+        con.execute('BEGIN IMMEDIATE')
+        con.execute("""CREATE TABLE IF NOT EXISTS custom_logo_attempt_rate (
+            bucket INTEGER NOT NULL, client_hash TEXT NOT NULL, attempts INTEGER NOT NULL,
+            PRIMARY KEY(bucket, client_hash))""")
+        con.execute('DELETE FROM custom_logo_attempt_rate WHERE bucket < ?', (bucket - 1,))
+        row = con.execute('SELECT attempts FROM custom_logo_attempt_rate WHERE bucket=? AND client_hash=?',
+                          (bucket, identity)).fetchone()
+        if row and row[0] >= _env_positive_int('TVH_M3U_LOGO_ATTEMPTS_PER_10_MIN', 30):
+            raise ValueError('로고 업로드 요청이 너무 많습니다. 잠시 후 다시 시도하세요.')
+        con.execute("""INSERT INTO custom_logo_attempt_rate VALUES (?, ?, 1)
+            ON CONFLICT(bucket, client_hash) DO UPDATE SET attempts=attempts+1""", (bucket, identity))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _save_file(file_storage, output_dir=None, enforce_queue_limits=False, reserve_quota=False):
     if file_storage is None:
         raise Exception('업로드할 로고 파일이 없습니다.')
     try:
-        normalized = normalize_logo_image(file_storage.read())
+        normalized = normalize_logo_image(file_storage.read(MAX_INPUT_BYTES + 1))
     except LogoImageError as e:
         raise Exception(str(e))
 
@@ -190,6 +215,8 @@ def _save_file(file_storage, output_dir=None, enforce_queue_limits=False):
     output_path = os.path.join(target_dir, stored_filename)
     if enforce_queue_limits:
         _ensure_queue_capacity(target_dir, output_path, normalized['file_size'])
+    if reserve_quota:
+        _check_mirror_rate_limit()
     atomic_write(output_path, normalized['data'])
     return {
         'stored_filename': stored_filename,
@@ -219,7 +246,7 @@ def _ensure_custom_logo_table(cur):
     """)
 
 
-def _save_db(source_channel_name, standard_name='', aka_name='', stored_filename='', sha1='', file_size=0):
+def _save_db(source_channel_name, standard_name='', aka_name='', stored_filename='', sha1='', file_size=0, replace_existing=True):
     source_channel_name = str(source_channel_name or '').strip()
     standard_name = str(standard_name or '').strip() or source_channel_name
     aka_name = str(aka_name or '').strip()
@@ -227,12 +254,19 @@ def _save_db(source_channel_name, standard_name='', aka_name='', stored_filename
     matched_channel_id = _resolve_matched_channel_id(standard_name) or _resolve_matched_channel_id(source_channel_name)
     logo_url_template = TaskM3U._build_logo_public_template(stored_filename)
     con = _connect_write_db()
+    con.execute('BEGIN IMMEDIATE')
     cur = con.cursor()
     _ensure_custom_logo_table(cur)
     cols = [row['name'] for row in cur.execute('PRAGMA table_info(custom_logo)').fetchall()]
     now = _now()
     if 'source_channel_name' in cols and 'matched_channel_id' in cols:
-        cur.execute("DELETE FROM custom_logo WHERE source_channel_name = ? AND COALESCE(matched_channel_id, '') = ?", (source_channel_name, matched_channel_id))
+        match = (source_channel_name, matched_channel_id)
+        if not replace_existing:
+            existing = cur.execute("SELECT id FROM custom_logo WHERE source_channel_name = ? AND COALESCE(matched_channel_id, '') = ? LIMIT 1", match).fetchone()
+            if existing:
+                con.close()
+                return {'matched_channel_id': matched_channel_id, 'standard_name': standard_name, 'logo_url_template': '', 'existing_preserved': True}
+        cur.execute("DELETE FROM custom_logo WHERE source_channel_name = ? AND COALESCE(matched_channel_id, '') = ?", match)
     values = {
         'provider': 'custom',
         'source_channel_name': source_channel_name,
@@ -266,6 +300,9 @@ def _save_db(source_channel_name, standard_name='', aka_name='', stored_filename
 
 
 def _mirror_to_owner(source_channel_name, standard_name, aka_name, file_path, stored_filename, sha1, file_size):
+    token = str(os.environ.get('TVH_M3U_LOGO_SUBMIT_KEY') or P.ModelSetting.get('basic_logo_submit_key') or '').strip()
+    if not token:
+        return {'ret': 'warning', 'msg': '로컬 저장 완료 · 공용 로고 전송 키가 없어 원격 전송은 생략했습니다.'}
     try:
         with open(file_path, 'rb') as f:
             files = {'logo_file': (stored_filename, f)}
@@ -277,8 +314,12 @@ def _mirror_to_owner(source_channel_name, standard_name, aka_name, file_path, st
                 'sha1': sha1,
                 'file_size': str(file_size),
             }
-            resp = requests.post(_mirror_url(), data=data, files=files, timeout=30)
+            resp = requests.post(_mirror_url(), data=data, files=files, timeout=30,
+                headers={'X-Logo-Submit-Key': token},
+                allow_redirects=False)
             resp.raise_for_status()
+            if resp.status_code != 200:
+                return {'ret': 'warning', 'msg': '원격 로고 수신 주소를 확인하세요.'}
             try:
                 return resp.json()
             except Exception:
@@ -289,6 +330,7 @@ def _mirror_to_owner(source_channel_name, standard_name, aka_name, file_path, st
 
 
 def handle_custom_logo_upload(req):
+    check_upload_request(req)
     source_channel_name = str(req.form.get('source_channel_name') or '').strip()
     standard_name = str(req.form.get('standard_name') or '').strip()
     aka_name = str(req.form.get('aka_name') or '').strip()
@@ -324,6 +366,8 @@ def handle_custom_logo_upload(req):
 
 
 def handle_custom_logo_mirror(req):
+    check_upload_request(req)
+    _check_mirror_attempt_limit(req.remote_addr)
     source_channel_name = str(req.form.get('source_channel_name') or '').strip()
     standard_name = str(req.form.get('standard_name') or '').strip()
     aka_name = str(req.form.get('aka_name') or '').strip()
@@ -332,16 +376,13 @@ def handle_custom_logo_mirror(req):
         return {'ret': 'warning', 'msg': '원본 채널명이 비어 있습니다.'}
     if logo_file is None:
         return {'ret': 'warning', 'msg': '업로드할 로고 파일이 없습니다.'}
-    try:
-        _check_mirror_rate_limit()
-    except Exception as e:
-        return {'ret': 'warning', 'msg': str(e)}
     saved = _save_file(
         logo_file,
         output_dir=_mirror_queue_dir(),
         enforce_queue_limits=True,
+        reserve_quota=True,
     )
-    db_info = _save_db(source_channel_name, standard_name, aka_name, saved['stored_filename'], saved['sha1'], saved['file_size'])
+    db_info = _save_db(source_channel_name, standard_name, aka_name, saved['stored_filename'], saved['sha1'], saved['file_size'], replace_existing=False)
     return {
         'ret': 'success',
         'msg': '원격 백업 저장 완료',

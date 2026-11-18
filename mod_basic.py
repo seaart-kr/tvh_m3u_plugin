@@ -27,6 +27,8 @@ from .task import Task
 from .task_custom_logo import handle_custom_logo_upload, handle_custom_logo_mirror
 from .task_epg_extra import build_dlive_epg_xml_bytes, merge_xmltv_files, DEFAULT_DLIVE_SCHEDULE_URL, DEFAULT_DLIVE_SOURCE_NAME
 from .hls_manager import HLSManager
+from .catalog_api import catalog_response
+from .public_access import authorize_public, check_upload_request
 
 
 def _is_sync_form(req):
@@ -1594,6 +1596,10 @@ def _handle_custom_logo_mirror(req):
 
 class ModuleBasic(PluginModuleBase):
     db_default = {
+        'basic_catalog_server_enabled': 'False',
+        'basic_catalog_read_key': '',
+        'basic_logo_mirror_enabled': 'False',
+        'basic_logo_submit_key': '',
         'basic_tvh_api_base': '',
         'basic_tvh_stream_base': '',
         'basic_tvh_admin_username': '',
@@ -1964,12 +1970,27 @@ class ModuleBasic(PluginModuleBase):
 
     def process_normal(self, sub, req):
         try:
-            if sub == 'custom_logo_mirror':
+            if sub in {'catalog', 'custom_logo_mirror'}:
+                from framework import F
+                catalog = sub == 'catalog'
+                gate = authorize_public(
+                    req,
+                    enabled=P.ModelSetting.get('basic_catalog_server_enabled' if catalog else 'basic_logo_mirror_enabled'),
+                    configured_key=P.ModelSetting.get('basic_catalog_read_key' if catalog else 'basic_logo_submit_key'),
+                    private_key=F.SystemModelSetting.get('apikey'),
+                    header='X-Catalog-Key' if catalog else 'X-Logo-Submit-Key',
+                    prefix='catalog_read_v1_' if catalog else 'logo_submit_v1_',
+                    method='GET' if catalog else 'POST',
+                )
+                if gate is not None:
+                    return gate
+                if catalog:
+                    return catalog_response(req)
                 return jsonify(handle_custom_logo_mirror(req))
             return jsonify({'ret': 'warning', 'msg': 'unknown normal request'})
         except Exception as e:
             logger.exception(f'[ff_tvh_m3u] process_normal exception: {str(e)}')
-            return jsonify({'ret': 'danger', 'msg': str(e)})
+            return jsonify({'ret': 'danger', 'msg': '공개 요청 처리에 실패했습니다.'}), 400
 
     def process_api(self, sub, req):
         try:
@@ -2204,7 +2225,7 @@ class ModuleBasic(PluginModuleBase):
                     return Response('TVH stream unavailable', status=502, mimetype='text/plain')
 
             elif sub == 'custom_logo_mirror':
-                return jsonify(handle_custom_logo_mirror(req))
+                return Response('use scoped logo submission endpoint', status=410, mimetype='text/plain')
 
             elif sub == 'epg_raw':
                 xml_path = _epg_cache_xml_path()
