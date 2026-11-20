@@ -1,5 +1,6 @@
 """Scoped public endpoints: these capabilities never authorize an FF API."""
 import hmac
+from importlib.metadata import PackageNotFoundError, version
 import re
 
 from flask import jsonify
@@ -22,6 +23,14 @@ def authorize_public(req, *, enabled, configured_key, private_key, header, prefi
     return None
 
 
+def _secure_multipart_runtime():
+    try:
+        installed = tuple(int(part) for part in re.findall(r'\d+', version('Werkzeug'))[:3])
+        return installed >= (3, 1, 9)
+    except PackageNotFoundError:
+        return False
+
+
 def check_upload_request(req):
     """Reject large/unknown bodies before accessing form/files or decoding."""
     if req.method != 'POST':
@@ -32,3 +41,5 @@ def check_upload_request(req):
         raise ValueError('업로드 요청은 6MB 이하만 허용합니다. 로고 파일은 5MB 이하입니다.')
     if req.mimetype != 'multipart/form-data':
         raise ValueError('multipart/form-data 로고 업로드만 허용합니다.')
+    if not _secure_multipart_runtime():
+        raise ValueError('로고 업로드에는 보안 수정판 Werkzeug 3.1.9 이상이 필요합니다.')

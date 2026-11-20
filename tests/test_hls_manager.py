@@ -62,12 +62,7 @@ class HLSManagerTest(unittest.TestCase):
     def test_ffmpeg_command_copies_stream_into_live_hls(self):
         directory = os.path.join(self.temp.name, 'channel')
         with mock.patch.object(HLS_MODULE.shutil, 'which', return_value='/usr/bin/ffmpeg'):
-            command = self.manager._build_command(
-                'https://tvh.example/stream/channel/uuid?profile=pass',
-                directory,
-                username='viewer',
-                password='secret',
-            )
+            command = self.manager._build_command(directory)
 
         joined = ' '.join(command)
         self.assertIn('-c copy', joined)
@@ -76,7 +71,8 @@ class HLSManagerTest(unittest.TestCase):
         self.assertIn('-hls_list_size 30', joined)
         self.assertIn('-hls_delete_threshold 30', joined)
         self.assertIn('delete_segments+omit_endlist+independent_segments+temp_file', joined)
-        self.assertIn('Authorization: Basic ', joined)
+        self.assertIn('-i pipe:0', joined)
+        self.assertNotIn('Authorization', joined)
         self.assertNotIn('viewer:secret@', joined)
         self.assertNotIn(' secret ', f' {joined} ')
 

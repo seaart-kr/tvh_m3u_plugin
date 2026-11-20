@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import atexit
-import base64
 import hashlib
 import os
 import re
@@ -10,6 +9,30 @@ import threading
 import time
 
 from .setup import logger
+from .stream_slots import acquire_slot
+from .upstream_transport import VerifiedSession
+
+
+def _feed_stream(process, url, username, password):
+    try:
+        with VerifiedSession() as session:
+            if username and password:
+                session.auth = (username, password)
+            with session.get(url, stream=True) as upstream:
+                if upstream.status_code not in (200, 206):
+                    return
+                for chunk in upstream.iter_content(65536):
+                    if process.poll() is not None:
+                        break
+                    if chunk:
+                        process.stdin.write(chunk)
+    except OSError as exc:
+        logger.warning('[tvh_m3u] HLS source closed: %s', type(exc).__name__)
+    finally:
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
 
 
 class HLSManager:
@@ -19,7 +42,7 @@ class HLSManager:
     CLEANUP_INTERVAL = 3
     PLAYLIST_MAX_AGE = 8
     LOCK_STALE_AGE = 90
-    MAX_STREAMS = 0
+    MAX_STREAMS = 4
     LIMIT_POLICY = 'reject'
     CONSUMER_MODE = 'shared'
     SWITCH_DELAY = 0.5
@@ -34,16 +57,16 @@ class HLSManager:
     @classmethod
     def configure(
         cls,
-        max_streams=0,
+        max_streams=4,
         limit_policy='reject',
         consumer_mode='shared',
         idle_timeout=60,
         switch_delay=0.5,
     ):
         try:
-            max_streams = max(0, min(int(max_streams), 64))
+            max_streams = max(0, min(int(max_streams), 64)) or 4
         except (TypeError, ValueError):
-            max_streams = 0
+            max_streams = 4
         try:
             idle_timeout = max(30, min(int(idle_timeout), 600))
         except (TypeError, ValueError):
@@ -237,6 +260,9 @@ class HLSManager:
                 cls._safe_clear_directory(state['directory'])
             except Exception as e:
                 logger.warning(f'[tvh_m3u] HLS cache cleanup failed: {str(e)}')
+        slot = state.pop('slot', None) if state else None
+        if slot is not None:
+            os.close(slot)
         lock_path = state.get('lock_path') if state else ''
         if lock_path:
             try:
@@ -282,7 +308,7 @@ class HLSManager:
                 cls._stop_state(state, clear=True)
 
     @classmethod
-    def _build_command(cls, upstream_url, directory, username='', password=''):
+    def _build_command(cls, directory):
         ffmpeg_path = shutil.which('ffmpeg')
         if not ffmpeg_path:
             raise RuntimeError('FFmpeg is not installed')
@@ -292,16 +318,8 @@ class HLSManager:
             '-hide_banner',
             '-loglevel', 'warning',
             '-nostdin',
-            '-user_agent', 'tvh_m3u_plugin/hls-proxy',
-        ]
-        if username and password:
-            token = base64.b64encode(
-                f'{username}:{password}'.encode('utf-8')
-            ).decode('ascii')
-            command.extend(['-headers', f'Authorization: Basic {token}\r\n'])
-
-        command.extend([
-            '-i', upstream_url,
+            '-protocol_whitelist', 'pipe',
+            '-i', 'pipe:0',
             '-map', '0:v:0?',
             '-map', '0:a:0?',
             '-c', 'copy',
@@ -312,7 +330,7 @@ class HLSManager:
             '-hls_flags', 'delete_segments+omit_endlist+independent_segments+temp_file',
             '-hls_segment_filename', os.path.join(directory, 'segment_%09d.ts'),
             os.path.join(directory, 'index.m3u8'),
-        ])
+        ]
         return command
 
     @classmethod
@@ -370,41 +388,39 @@ class HLSManager:
             if state is None:
                 process = None
             elif not state.get('process'):
-                cls._safe_clear_directory(directory)
-                os.makedirs(directory, exist_ok=True)
+                slot = None
                 try:
+                    slot = acquire_slot(os.path.join(cls.CACHE_ROOT, '.hls-slots'), cls.MAX_STREAMS)
+                    if slot is None:
+                        cls._stop_state(state, clear=False)
+                        return {'ret': 'warning', 'status': 429, 'msg': 'HLS stream limit reached'}
+                    state['slot'] = slot
+                    state['directory'] = directory
+                    cls._safe_clear_directory(directory)
+                    os.makedirs(directory, exist_ok=True)
                     process = subprocess.Popen(
-                        cls._build_command(
-                            upstream_url,
-                            directory,
-                            username=username,
-                            password=password,
-                        ),
-                        stdin=subprocess.DEVNULL,
+                        cls._build_command(directory),
+                        stdin=subprocess.PIPE,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         close_fds=True,
                     )
+                    state['process'] = process
+                    threading.Thread(
+                        target=_feed_stream, args=(process, upstream_url, username, password),
+                        daemon=True, name='tvh_m3u_hls_source',
+                    ).start()
                 except Exception as e:
-                    cls._safe_clear_directory(directory)
-                    try:
-                        os.unlink(state.get('lock_path') or '')
-                    except OSError:
-                        pass
-                    logger.warning(
-                        f'[tvh_m3u] HLS process start failed channel_uuid={channel_uuid}: {str(e)}'
-                    )
+                    cls._stop_state(state)
+                    logger.warning('[tvh_m3u] HLS process start failed: %s', type(e).__name__)
                     return {'ret': 'warning', 'status': 503, 'msg': 'HLS is unavailable'}
 
-                state = {
+                state.update({
                     'channel_uuid': channel_uuid,
-                    'process': process,
-                    'directory': directory,
                     'playlist': os.path.join(directory, 'index.m3u8'),
                     'last_access': now,
-                    'lock_path': state.get('lock_path'),
                     'consumers': {consumer_id} if consumer_id else set(),
-                }
+                })
                 cls._streams[channel_uuid] = state
                 cls._touch_shared_access(channel_uuid, directory)
 

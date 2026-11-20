@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import re
 import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as safe_xml
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 
@@ -134,7 +135,7 @@ def build_dlive_epg_xml_bytes(channel_name, channel_id, url_template='', days=2)
 
 
 def merge_xmltv_files(base_xml_path, extra_xml_items, output_path):
-    tree = ET.parse(base_xml_path)
+    tree = safe_xml.parse(base_xml_path)
     root = tree.getroot()
 
     existing_channel_ids = set()
@@ -148,7 +149,7 @@ def merge_xmltv_files(base_xml_path, extra_xml_items, output_path):
         xml_bytes = item.get('xml_bytes') if isinstance(item, dict) else None
         if not xml_bytes:
             continue
-        extra_root = ET.fromstring(xml_bytes)
+        extra_root = safe_xml.fromstring(xml_bytes)
         for child in list(extra_root):
             tag = str(child.tag).split('}', 1)[-1]
             if tag == 'channel':

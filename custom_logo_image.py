@@ -42,8 +42,8 @@ def _decode_logo_image(data):
         raise LogoImageError('이미지 검증에 필요한 Pillow 패키지가 설치되어 있지 않습니다.')
 
     version = tuple(int(v) for v in re.findall(r'\d+', Image.__version__)[:3])
-    if version < (12, 3, 0):
-        raise LogoImageError('보안 수정판 Pillow 12.3.0 이상이 필요합니다. FF 이미지의 라이브러리를 업데이트하세요.')
+    if version < (13, 0, 0):
+        raise LogoImageError('보안 수정판 Pillow 13.0.0 이상이 필요합니다. FF 이미지의 라이브러리를 업데이트하세요.')
     formats = sorted(ALLOWED_FORMATS)
     webp = features.version('webp')
     if not webp or tuple(int(v) for v in re.findall(r'\d+', webp)[:3]) < (1, 3, 2):

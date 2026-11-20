@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from urllib.parse import quote, urlsplit, urlunsplit, parse_qsl, urlencode
 
-import requests
+from .upstream_transport import VerifiedSession
 
 from .setup import *
 
@@ -9,15 +9,7 @@ from .setup import *
 class TaskBase:
     @staticmethod
     def _build_session(username='', password=''):
-        session = requests.Session()
-
-        verify_ssl = False
-        try:
-            verify_ssl = P.ModelSetting.get_bool('basic_tvh_use_verify_ssl')
-        except Exception:
-            verify_ssl = False
-
-        session.verify = verify_ssl
+        session = VerifiedSession()
 
         if username and password:
             session.auth = (username, password)

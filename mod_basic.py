@@ -14,8 +14,8 @@ import tempfile
 import errno
 from contextlib import contextmanager
 from datetime import datetime
-from urllib.parse import urlencode
 import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as safe_xml
 from xml.sax.saxutils import quoteattr
 
 import requests
@@ -29,6 +29,19 @@ from .task_epg_extra import build_dlive_epg_xml_bytes, merge_xmltv_files, DEFAUL
 from .hls_manager import HLSManager
 from .catalog_api import catalog_response
 from .public_access import authorize_public, check_upload_request
+from .playback_access import CHANNELS, FEEDS, SEGMENT, NO_STORE, authorized, installation_secret, signed_url
+from .upstream_transport import VerifiedSession, STREAM_TIMEOUT
+from .stream_slots import acquire_slot
+
+
+def _playback_secret():
+    from framework import F
+    return installation_secret(str(F.SystemModelSetting.get('apikey') or ''))
+
+
+def _playback_url(target):
+    return signed_url(request.host_url, P.package_name, _playback_secret(), target)
+
 
 
 def _is_sync_form(req):
@@ -95,7 +108,7 @@ def _get_hls_runtime_options():
         consumer_mode = 'shared'
 
     return {
-        'max_streams': _int_setting('basic_hls_max_streams', 0, 0, 64),
+        'max_streams': _int_setting('basic_hls_max_streams', 4, 0, 64) or 4,
         'limit_policy': limit_policy,
         'consumer_mode': consumer_mode,
         'idle_timeout': _int_setting('basic_hls_idle_timeout', 60, 30, 600),
@@ -124,7 +137,7 @@ def _get_hls_consumer_id(req=None, runtime_options=None):
 
 
 def _hls_setting_arg_defaults(arg):
-    arg.setdefault('basic_hls_max_streams', '0')
+    arg.setdefault('basic_hls_max_streams', '4')
     arg.setdefault('basic_hls_limit_policy', 'reject')
     arg.setdefault('basic_hls_consumer_mode', 'shared')
     arg.setdefault('basic_hls_idle_timeout', '60')
@@ -767,7 +780,7 @@ def _build_epg_tvh_cache(xml_path=None):
             if previous is None or entry.get('rank', 9999) < previous.get('rank', 9999):
                 epg_index[norm][provider_key] = entry
 
-    context = ET.iterparse(raw_xml_path, events=('start', 'end'))
+    context = safe_xml.iterparse(raw_xml_path, events=('start', 'end'))
     for event, elem in context:
         if event == 'start' and not root_seen:
             root_tag = _safe_tag_name(elem.tag) or 'tv'
@@ -885,7 +898,7 @@ def _build_epg_tvh_cache(xml_path=None):
             continue
 
         try:
-            channel_elem = ET.fromstring(selected.get('xml') or b'')
+            channel_elem = safe_xml.fromstring(selected.get('xml') or b'')
         except Exception:
             unmatched_count += 1
             match_rows.append({
@@ -939,7 +952,7 @@ def _build_epg_tvh_cache(xml_path=None):
             fw.write(b'\n')
             channel_count += 1
 
-        context = ET.iterparse(raw_xml_path, events=('end',))
+        context = safe_xml.iterparse(raw_xml_path, events=('end',))
         for _event, elem in context:
             tag = _safe_tag_name(elem.tag)
             if tag == 'programme':
@@ -1035,7 +1048,7 @@ def _summarize_epg_xml(xml_path, sample_limit=None):
     sample_channels = []
     provider_channel_counts = {}
 
-    context = ET.iterparse(xml_path, events=('end',))
+    context = safe_xml.iterparse(xml_path, events=('end',))
     for _event, elem in context:
         tag = _safe_tag_name(elem.tag)
         if tag == 'channel':
@@ -1104,7 +1117,7 @@ def _summarize_epg_xml(xml_path, sample_limit=None):
     }
 
 
-def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
+def _prepare_epg_xml_from_url(url, timeout=60):
     cache_dir = _epg_cache_dir()
     tmp_download = _epg_temp_path(cache_dir, '.download.tmp')
     tmp_xml = _epg_temp_path(cache_dir, '.raw.tmp.xml')
@@ -1120,8 +1133,9 @@ def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
     )
 
     try:
-        with requests.get(url, stream=True, timeout=(10, timeout), verify=verify_ssl, headers={'User-Agent': 'ff_tvh_m3u/epg'}) as resp:
-            resp.raise_for_status()
+        with VerifiedSession() as session, session.get(url, stream=True, timeout=(10, timeout), headers={'User-Agent': 'ff_tvh_m3u/epg'}) as resp:
+            if resp.status_code != 200:
+                raise ValueError('EPG 원본에서 정상 응답을 받지 못했습니다.')
             content_length = str(resp.headers.get('Content-Length') or '').strip()
             if content_length:
                 try:
@@ -1188,9 +1202,9 @@ def _prepare_epg_xml_from_url(url, verify_ssl=True, timeout=60):
                 pass
 
 
-def _fetch_epg_and_build_meta(url, verify_ssl=True):
+def _fetch_epg_and_build_meta(url):
     with _epg_fetch_lock():
-        xml_path = _prepare_epg_xml_from_url(url, verify_ssl=verify_ssl)
+        xml_path = _prepare_epg_xml_from_url(url)
         summary = _summarize_epg_xml(xml_path)
         tvh_summary = _build_epg_tvh_cache(xml_path)
         meta = {
@@ -1279,8 +1293,7 @@ def _run_epg_fetch_from_settings(trigger='manual'):
     if not epg_url:
         raise Exception('myepg XML 주소가 비어 있습니다.')
 
-    verify_ssl = str(P.ModelSetting.get('basic_tvh_use_verify_ssl') or 'False').strip().lower() in ['true', 'on', '1', 'yes', 'y']
-    meta = _fetch_epg_and_build_meta(epg_url, verify_ssl=verify_ssl)
+    meta = _fetch_epg_and_build_meta(epg_url)
 
     P.ModelSetting.set('basic_epg_last_fetch_time', meta.get('fetched_at', ''))
     P.ModelSetting.set('basic_epg_channel_count', str(meta.get('channel_count', 0)))
@@ -1607,7 +1620,7 @@ class ModuleBasic(PluginModuleBase):
         'basic_tvh_play_username': '',
         'basic_tvh_play_password': '',
         'basic_tvh_stream_profile': '',
-        'basic_hls_max_streams': '0',
+        'basic_hls_max_streams': '4',
         'basic_hls_limit_policy': 'reject',
         'basic_hls_consumer_mode': 'shared',
         'basic_hls_idle_timeout': '60',
@@ -1678,14 +1691,14 @@ class ModuleBasic(PluginModuleBase):
             arg['package_name'] = P.package_name
             arg['page_sub'] = sub
             arg['ajax_sub'] = self.name
-            arg['m3u_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u")
-            arg['m3u_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tvh")
-            arg['m3u_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_tivimate")
-            arg['m3u_shyni_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/m3u_shyni")
-            arg['alive_fix_url_yaml_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/alive_fix_url.yaml")
-            arg['epg_raw_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_raw")
-            arg['epg_tvh_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tvh")
-            arg['epg_tivimate_url'] = ToolUtil.make_apikey_url(f"/{P.package_name}/api/epg_tivimate")
+            arg['m3u_url'] = _playback_url('m3u')
+            arg['m3u_tvh_url'] = _playback_url('m3u_tvh')
+            arg['m3u_tivimate_url'] = _playback_url('m3u_tivimate')
+            arg['m3u_shyni_url'] = _playback_url('m3u_shyni')
+            arg['alive_fix_url_yaml_url'] = _playback_url('alive_fix_url.yaml')
+            arg['epg_raw_url'] = _playback_url('epg_raw')
+            arg['epg_tvh_url'] = _playback_url('epg_tvh')
+            arg['epg_tivimate_url'] = _playback_url('epg_tivimate')
             logo_priority_state = _build_logo_priority_state(P.ModelSetting.get('basic_logo_priority') or Task.get_logo_priority_text())
             arg['logo_priority_text'] = logo_priority_state.get('text', '')
             arg['logo_priority_items'] = logo_priority_state.get('items', [])
@@ -1863,8 +1876,7 @@ class ModuleBasic(PluginModuleBase):
                 if not epg_url:
                     return jsonify({'ret': 'warning', 'msg': 'myepg XML 주소를 먼저 입력하세요.'})
                 try:
-                    verify_ssl = str(P.ModelSetting.get('basic_tvh_use_verify_ssl') or 'False').strip().lower() in ['true', 'on', '1', 'yes', 'y']
-                    meta = _fetch_epg_and_build_meta(epg_url, verify_ssl=verify_ssl)
+                    meta = _fetch_epg_and_build_meta(epg_url)
                     P.ModelSetting.set('basic_epg_last_fetch_time', meta.get('fetched_at', ''))
                     P.ModelSetting.set('basic_epg_channel_count', str(meta.get('channel_count', 0)))
                     P.ModelSetting.set('basic_epg_programme_count', str(meta.get('programme_count', 0)))
@@ -1957,6 +1969,7 @@ class ModuleBasic(PluginModuleBase):
                 text = Task.build_m3u(
                     target=target,
                     proxy_base_url=request.host_url.rstrip('/'),
+                    proxy_apikey=_playback_secret(),
                     consumer_id=_get_hls_consumer_id(req),
                 )
                 preview = '\n'.join(text.splitlines()[:1000])
@@ -1970,6 +1983,10 @@ class ModuleBasic(PluginModuleBase):
 
     def process_normal(self, sub, req):
         try:
+            if sub in FEEDS or sub in CHANNELS or sub == SEGMENT:
+                if not authorized(req, _playback_secret(), sub):
+                    return Response('forbidden', status=403, headers=NO_STORE)
+                return self.process_api(sub, req)
             if sub in {'catalog', 'custom_logo_mirror'}:
                 from framework import F
                 catalog = sub == 'catalog'
@@ -2002,32 +2019,32 @@ class ModuleBasic(PluginModuleBase):
                 text = Task.build_m3u(
                     target='tivimate',
                     proxy_base_url=request.host_url.rstrip('/'),
-                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    proxy_apikey=_playback_secret(),
                     consumer_id=_get_hls_consumer_id(req),
                 )
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',
-                    headers={'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
+                    headers={**NO_STORE, 'Content-Disposition': 'inline; filename=tivimate_channels.m3u'}
                 )
 
             elif sub == 'm3u_tvh':
                 text = Task.build_m3u(
                     target='tvh',
                     proxy_base_url=request.host_url.rstrip('/'),
-                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    proxy_apikey=_playback_secret(),
                 )
                 return Response(
                     text,
                     mimetype='audio/x-mpegurl',
-                    headers={'Content-Disposition': 'inline; filename=tvh_channels.m3u'}
+                    headers={**NO_STORE, 'Content-Disposition': 'inline; filename=tvh_channels.m3u'}
                 )
 
             elif sub == 'm3u_tivimate':
                 text = Task.build_m3u(
                     target='tivimate',
                     proxy_base_url=request.host_url.rstrip('/'),
-                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    proxy_apikey=_playback_secret(),
                     consumer_id=_get_hls_consumer_id(req),
                 )
                 return Response(
@@ -2035,7 +2052,7 @@ class ModuleBasic(PluginModuleBase):
                     mimetype='audio/x-mpegurl',
                     headers={
                         'Content-Disposition': 'inline; filename=tivimate_shyni_channels.m3u',
-                        'Cache-Control': 'no-store',
+                        **NO_STORE,
                     },
                 )
 
@@ -2043,7 +2060,7 @@ class ModuleBasic(PluginModuleBase):
                 text = Task.build_m3u(
                     target='shyni',
                     proxy_base_url=request.host_url.rstrip('/'),
-                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    proxy_apikey=_playback_secret(),
                     consumer_id=_get_hls_consumer_id(req),
                 )
                 return Response(
@@ -2051,14 +2068,14 @@ class ModuleBasic(PluginModuleBase):
                     mimetype='audio/x-mpegurl',
                     headers={
                         'Content-Disposition': 'inline; filename=shyni_hls_channels.m3u',
-                        'Cache-Control': 'no-store',
+                        **NO_STORE,
                     },
                 )
 
             elif sub == 'alive_fix_url.yaml':
                 text = Task.build_alive_fix_url_yaml(
                     proxy_base_url=request.host_url.rstrip('/'),
-                    proxy_apikey=str(request.args.get('apikey') or '').strip(),
+                    proxy_apikey=_playback_secret(),
                     consumer_id=_get_hls_consumer_id(req),
                 )
                 return Response(
@@ -2066,7 +2083,7 @@ class ModuleBasic(PluginModuleBase):
                     mimetype='text/yaml',
                     headers={
                         'Content-Disposition': 'inline; filename=alive_fix_url.yaml',
-                        'Cache-Control': 'no-store',
+                        **NO_STORE,
                     },
                 )
 
@@ -2112,33 +2129,23 @@ class ModuleBasic(PluginModuleBase):
                         mimetype='text/plain',
                     )
 
-                api_key = str(request.args.get('apikey') or '').strip()
                 playlist_lines = []
+                signing_key = _playback_secret()
                 for raw_line in str(hls.get('playlist') or '').splitlines():
                     line = raw_line.strip()
                     if line and not line.startswith('#'):
-                        filename = os.path.basename(line)
-                        query = [
-                            ('m', 'url'),
-                            ('s', 'tvh'),
-                            ('i', channel_uuid),
-                            ('f', filename),
-                        ]
-                        if api_key:
-                            query.append(('apikey', api_key))
-                        if consumer_id:
-                            query.append(('client', consumer_id))
-                        line = (
-                            f'{request.host_url.rstrip("/")}/{P.package_name}/api/'
-                            f'hls_segment.ts?{urlencode(query)}'
+                        line = signed_url(
+                            request.host_url, P.package_name, signing_key, SEGMENT,
+                            channel=channel_uuid, filename=os.path.basename(line), consumer_id=consumer_id,
                         )
-                    playlist_lines.append(line)
+                    if line:
+                        playlist_lines.append(line)
 
                 return Response(
                     '\n'.join(playlist_lines) + '\n',
                     mimetype='application/vnd.apple.mpegurl',
                     headers={
-                        'Cache-Control': 'no-store',
+                        **NO_STORE,
                         'X-Accel-Buffering': 'no',
                     },
                 )
@@ -2162,7 +2169,7 @@ class ModuleBasic(PluginModuleBase):
                 return Response(
                     segment,
                     content_type='video/mp2t',
-                    headers={'Cache-Control': 'no-store'},
+                    headers=NO_STORE,
                 )
 
             elif sub == 'stream.ts':
@@ -2179,17 +2186,38 @@ class ModuleBasic(PluginModuleBase):
                         mimetype='text/plain',
                     )
 
+                limit = _get_hls_runtime_options()['max_streams']
+                slot = acquire_slot(os.path.join(HLSManager.CACHE_ROOT, '.direct-slots'), limit)
+                if slot is None:
+                    return Response('stream limit reached', status=429, headers=NO_STORE)
+
                 upstream = None
+                session = None
+
+                def close_stream():
+                    nonlocal slot
+                    if slot is None:
+                        return
+                    active_slot, slot = slot, None
+                    try:
+                        if upstream is not None:
+                            upstream.close()
+                        if session is not None:
+                            session.close()
+                    finally:
+                        os.close(active_slot)
+
                 try:
-                    upstream = Task.get_play_session().get(
+                    session = Task.get_play_session()
+                    upstream = session.get(
                         resolved.get('upstream_url'),
                         stream=True,
-                        timeout=(10, None),
+                        timeout=STREAM_TIMEOUT,
                         allow_redirects=False,
                         headers={'User-Agent': 'tvh_m3u_plugin/alive-proxy'},
                     )
                     if upstream.status_code not in [200, 206]:
-                        upstream.close()
+                        close_stream()
                         return Response('TVH stream unavailable', status=502, mimetype='text/plain')
 
                     def generate_stream():
@@ -2203,21 +2231,19 @@ class ModuleBasic(PluginModuleBase):
                                 f'channel_uuid={resolved.get("channel_uuid", "")}'
                             )
                         finally:
-                            upstream.close()
+                            close_stream()
 
                     response = Response(
                         stream_with_context(generate_stream()),
                         status=upstream.status_code,
                         content_type='video/mp2t',
-                        direct_passthrough=True,
                     )
-                    response.headers['Cache-Control'] = 'no-store'
+                    response.headers.update(NO_STORE)
                     response.headers['X-Accel-Buffering'] = 'no'
-                    response.call_on_close(upstream.close)
+                    response.call_on_close(close_stream)
                     return response
-                except requests.RequestException:
-                    if upstream is not None:
-                        upstream.close()
+                except Exception:
+                    close_stream()
                     logger.warning(
                         '[ff_tvh_m3u] alive stream upstream connection failed '
                         f'channel_uuid={resolved.get("channel_uuid", "")}'
@@ -2234,7 +2260,7 @@ class ModuleBasic(PluginModuleBase):
                 return Response(
                     _iter_epg_file_chunks(xml_path),
                     mimetype='application/xml',
-                    headers={'Content-Disposition': 'inline; filename=myepg_raw.xml'}
+                    headers={**NO_STORE, 'Content-Disposition': 'inline; filename=myepg_raw.xml'}
                 )
 
             elif sub == 'epg_tvh':
@@ -2250,7 +2276,7 @@ class ModuleBasic(PluginModuleBase):
                 return Response(
                     _iter_epg_file_chunks(xml_path),
                     mimetype='application/xml',
-                    headers={'Content-Disposition': 'inline; filename=tvh_epg.xml'}
+                    headers={**NO_STORE, 'Content-Disposition': 'inline; filename=tvh_epg.xml'}
                 )
 
             elif sub == 'epg_tivimate':
@@ -2266,11 +2292,11 @@ class ModuleBasic(PluginModuleBase):
                 return Response(
                     _iter_epg_file_chunks(xml_path),
                     mimetype='application/xml',
-                    headers={'Content-Disposition': 'inline; filename=tivimate_epg.xml'}
+                    headers={**NO_STORE, 'Content-Disposition': 'inline; filename=tivimate_epg.xml'}
                 )
 
             return jsonify({'ret': 'warning', 'msg': 'unknown api'})
 
         except Exception as e:
-            logger.exception(f'[ff_tvh_m3u] process_api exception: {str(e)}')
-            return jsonify({'ret': 'danger', 'msg': str(e)})
+            logger.warning('[ff_tvh_m3u] playback request failed: %s', type(e).__name__)
+            return jsonify({'ret': 'danger', 'msg': '재생 요청 처리에 실패했습니다.'}), 502

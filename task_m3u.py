@@ -4,13 +4,15 @@ import os
 import re
 import sqlite3
 import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as safe_xml
 from datetime import datetime
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from .setup import P, logger
 from .model import ModelChannel, ModelGroupProfile, ModelChannelProfile, ModelLogoOverride
 from .task_base import TaskBase
+from .playback_access import signed_url
 
 
 class TaskM3U(TaskBase):
@@ -57,9 +59,15 @@ class TaskM3U(TaskBase):
             playlist_url = f'{api_base}/playlist/channels'
             logger.debug(f'[ff_tvh_m3u] playlist_url={playlist_url}')
 
-            resp = session.get(playlist_url, timeout=30)
-            resp.raise_for_status()
-            text = resp.text or ''
+            with session.get(playlist_url, stream=True) as resp:
+                if resp.status_code != 200:
+                    return {}
+                data = bytearray()
+                for part in resp.iter_content(65536):
+                    if len(data) + len(part) > 4 * 1024 * 1024:
+                        raise ValueError('TVH 재생목록 크기 제한을 초과했습니다.')
+                    data.extend(part)
+            text = data.decode('utf-8', errors='replace')
 
             mapping = {}
             current_uuid = None
@@ -83,7 +91,7 @@ class TaskM3U(TaskBase):
             return mapping
 
         except Exception as e:
-            logger.exception(f'[ff_tvh_m3u] fetch_playlist_map exception: {str(e)}')
+            logger.warning('[ff_tvh_m3u] TVH playlist lookup failed: %s', type(e).__name__)
             return {}
 
     @staticmethod
@@ -131,19 +139,12 @@ class TaskM3U(TaskBase):
 
     @staticmethod
     def build_proxy_stream_url(base_url, api_key, channel_uuid, use_hls=False, consumer_id=''):
-        base_url = str(base_url or '').rstrip('/')
-        channel_uuid = str(channel_uuid or '').strip()
-        query = [
-            ('m', 'url'),
-            ('s', 'tvh'),
-            ('i', channel_uuid),
-        ]
-        if api_key:
-            query.append(('apikey', str(api_key).strip()))
-        if use_hls and consumer_id:
-            query.append(('client', str(consumer_id).strip()))
-        endpoint = 'url.m3u8' if use_hls else 'stream.ts'
-        return f'{base_url}/{P.package_name}/api/{endpoint}?{urlencode(query)}'
+        return signed_url(
+            base_url, P.package_name, api_key,
+            'url.m3u8' if use_hls else 'stream.ts',
+            channel=str(channel_uuid or '').strip(),
+            consumer_id=str(consumer_id or '').strip() if use_hls else '',
+        )
 
     @staticmethod
     def build_alive_stream_url(base_url, api_key, channel_uuid, consumer_id=''):
@@ -1708,21 +1709,13 @@ class TaskM3U(TaskBase):
                         skipped_no_playlist += 1
                         continue
 
-                    if target == 'tivimate':
-                        effective_profile = TaskM3U.get_effective_profile(channel_uuid, group_name)
-                        stream_url = TaskM3U.normalize_stream_url(
-                            source_url,
-                            effective_profile,
-                            include_auth=True,
-                        )
-                    else:
-                        stream_url = TaskM3U.build_proxy_stream_url(
-                            proxy_base_url,
-                            proxy_apikey,
-                            channel_uuid,
-                            use_hls=(target == 'shyni'),
-                            consumer_id=consumer_id,
-                        )
+                    stream_url = TaskM3U.build_proxy_stream_url(
+                        proxy_base_url,
+                        proxy_apikey,
+                        channel_uuid,
+                        use_hls=(target == 'shyni'),
+                        consumer_id=consumer_id,
+                    )
                     if not stream_url:
                         skipped_empty_url += 1
                         continue
@@ -1808,7 +1801,7 @@ class TaskM3U(TaskBase):
             return b''
 
         try:
-            tree = ET.parse(xml_path)
+            tree = safe_xml.parse(xml_path)
             root = tree.getroot()
             base_url = TaskM3U._get_request_base_url()
 

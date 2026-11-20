@@ -38,16 +38,13 @@ class AliveProxyTest(unittest.TestCase):
             else:
                 TASK_M3U_MODULE.P.package_name = original_package
 
-        self.assertEqual(
-            url,
-            'https://oracle.example/tvh_m3u_plugin/api/url.m3u8'
-            '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1',
-        )
+        self.assertIn('/normal/url.m3u8?play_key=', url)
+        self.assertNotIn('apikey=', url)
+        self.assertNotIn('PUBLICKEY1', url)
         self.assertNotIn('@', url)
         self.assertIn('&client=living-room', session_url)
         self.assertNotIn('client=', raw_url)
-
-        self.assertIn('/api/stream.ts?', raw_url)
+        self.assertIn('/normal/stream.ts?', raw_url)
         self.assertNotIn('@', raw_url)
 
     def test_resolver_validates_channel_and_never_embeds_auth(self):
@@ -113,23 +110,22 @@ class AliveProxyTest(unittest.TestCase):
         self.assertIn('HLSManager.read_segment(', source)
         self.assertIn('_configure_hls_manager()', source)
         self.assertIn('consumer_id=consumer_id', source)
-        self.assertIn("query.append(('client', consumer_id))", source)
+        self.assertIn('filename=os.path.basename(line), consumer_id=consumer_id', source)
         self.assertIn("content_type='video/mp2t'", source)
         self.assertIn("allow_redirects=False", source)
         self.assertIn("response.headers['X-Accel-Buffering'] = 'no'", source)
         self.assertIn('stream_with_context(generate_stream())', source)
 
-    def test_tivimate_uses_direct_auth_and_shyni_uses_hls_proxy(self):
+    def test_tivimate_uses_signed_ts_and_shyni_uses_signed_hls(self):
         source = (ROOT / 'task_m3u.py').read_text(encoding='utf-8-sig')
         build_m3u_source = source[source.index('    def build_m3u('):source.index('    def build_alive_fix_url_yaml(')]
 
-        self.assertIn("if target == 'tivimate':", build_m3u_source)
-        self.assertIn('include_auth=True', build_m3u_source)
+        self.assertNotIn('include_auth=True', build_m3u_source)
         self.assertIn("use_hls=(target == 'shyni')", build_m3u_source)
         self.assertIn('TaskM3U.build_proxy_stream_url(', build_m3u_source)
         self.assertNotIn("use_hls=(target == 'tivimate')", build_m3u_source)
 
-    def test_proxy_playlist_apis_forward_their_key(self):
+    def test_proxy_playlist_apis_use_the_installation_signer(self):
         source = (ROOT / 'mod_basic.py').read_text(encoding='utf-8-sig')
         api_source = source[source.index('    def process_api('):]
 
@@ -138,7 +134,7 @@ class AliveProxyTest(unittest.TestCase):
             start = api_source.index(marker)
             block = api_source[start:start + 700]
             self.assertIn("proxy_base_url=request.host_url.rstrip('/')", block)
-            self.assertIn("proxy_apikey=str(request.args.get('apikey') or '').strip()", block)
+            self.assertIn("proxy_apikey=_playback_secret()", block)
 
     def test_tivimate_and_shyni_have_separate_published_addresses(self):
         module_source = (ROOT / 'mod_basic.py').read_text(encoding='utf-8-sig')
@@ -196,11 +192,9 @@ class AliveProxyTest(unittest.TestCase):
         self.assertIn('  fix_url:', text)
         self.assertIn('      name: "KBS1: 서울"', text)
         self.assertIn('      icon: "https://oracle.example/logo/kbs1.png"', text)
-        self.assertIn(
-            '      url: "https://oracle.example/tvh_m3u_plugin/api/url.m3u8'
-            '?m=url&s=tvh&i=channel-uuid&apikey=PUBLICKEY1"',
-            text,
-        )
+        self.assertIn('      url: "https://oracle.example/tvh_m3u_plugin/normal/url.m3u8?play_key=', text)
+        self.assertIn('&i=channel-uuid', text)
+        self.assertNotIn('PUBLICKEY1', text)
         self.assertNotIn('@', text)
 
     def test_fixed_url_ui_supports_output_and_copy(self):
@@ -215,11 +209,12 @@ class AliveProxyTest(unittest.TestCase):
         self.assertIn("navigator.clipboard.writeText(text)", script)
         self.assertIn("document.execCommand('copy')", script)
 
-    def test_m3u_settings_explain_tivimate_embedded_credentials(self):
+    def test_m3u_settings_explain_server_side_authentication(self):
         source = (ROOT / 'templates' / 'tvh_m3u_basic_m3u.html').read_text(encoding='utf-8-sig')
 
-        self.assertIn('ID:비밀번호@ 형식으로 포함', source)
-        self.assertIn('Shyni 전용 HLS API', source)
+        self.assertIn('TVH 원본에 연결할 때 서버에서 사용합니다.', source)
+        self.assertNotIn('ID:비밀번호@', source)
+        self.assertIn('Shyni는 HLS 중계를 사용합니다', source)
 
 
 if __name__ == '__main__':
