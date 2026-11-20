@@ -4,6 +4,9 @@
 import hashlib
 import os
 import re
+import struct
+import subprocess
+import sys
 import tempfile
 import threading
 from io import BytesIO
@@ -22,20 +25,44 @@ class LogoImageError(Exception):
 
 def normalize_logo_image(data):
     """Decode an untrusted image and return a metadata-free, static PNG."""
+    _check_input(data)
     if not _DECODE_SLOTS.acquire(blocking=False):
         raise LogoImageError('다른 로고를 처리 중입니다. 잠시 후 다시 시도하세요.')
     try:
+        decoder = os.environ.get('TVH_M3U_LOGO_PYTHON')
+        if decoder:
+            return _decode_with_helper(decoder, data)
         return _decode_logo_image(data)
     finally:
         _DECODE_SLOTS.release()
 
 
-def _decode_logo_image(data):
+def _check_input(data):
     if not data:
         raise LogoImageError('업로드한 파일이 비어 있습니다.')
     if len(data) > MAX_INPUT_BYTES:
         raise LogoImageError('로고 파일은 5MB 이하만 업로드할 수 있습니다.')
 
+
+def _decode_with_helper(decoder, data):
+    if not os.path.isabs(decoder):
+        raise LogoImageError('로고 검증용 Python 경로는 절대 경로여야 합니다.')
+    try:
+        result = subprocess.run(
+            [decoder, '-I', '-B', os.path.abspath(__file__)], input=data,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15, env={},
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise LogoImageError('로고 검증용 Python을 실행할 수 없습니다.') from None
+    png = result.stdout
+    if (result.returncode != 0 or len(png) < 24 or len(png) > MAX_OUTPUT_BYTES
+            or png[:16] != b'\x89PNG\r\n\x1a\n\0\0\0\rIHDR'):
+        raise LogoImageError('정상적인 이미지 파일이 아닙니다. 로고 검증용 Python과 Pillow 버전도 확인하세요.')
+    width, height = struct.unpack('>II', png[16:24])
+    return _normalized_result(png, width, height)
+
+
+def _decode_logo_image(data):
     try:
         from PIL import Image, UnidentifiedImageError, features
     except ImportError:
@@ -72,7 +99,10 @@ def _decode_logo_image(data):
     except (UnidentifiedImageError, OSError, ValueError, SyntaxError, EOFError, Image.DecompressionBombError):
         raise LogoImageError('정상적인 이미지 파일이 아닙니다.')
 
-    png_data = output.getvalue()
+    return _normalized_result(output.getvalue(), width, height)
+
+
+def _normalized_result(png_data, width, height):
     if len(png_data) > MAX_OUTPUT_BYTES:
         raise LogoImageError('변환된 PNG 파일은 5MB 이하만 저장할 수 있습니다.')
 
@@ -105,3 +135,12 @@ def atomic_write(path, data):
         except OSError:
             pass
         raise
+
+
+if __name__ == '__main__':
+    try:
+        incoming = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
+        _check_input(incoming)
+        sys.stdout.buffer.write(_decode_logo_image(incoming)['data'])
+    except LogoImageError:
+        sys.exit(1)

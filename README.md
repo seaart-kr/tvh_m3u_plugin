@@ -24,3 +24,4 @@ TVHeadend 채널을 M3U로 만들고 Shyni에는 HLS 프록시 주소로 제공�
 - API 메뉴에 표시되는 주소를 사용하면 FF 공통 API 키와 TVHeadend 계정이 재생 URL에 포함되지 않습니다. 새 M3U에서 TiviMate·TVH는 MPEG-TS 중계, Shyni는 HLS 중계를 사용합니다. 기존 M3U 주소도 목록을 다시 동기화하면 서명된 채널 URL을 제공합니다. ALIVE 고정주소는 새 YAML을 복사해 적용합니다. 재생 링크는 해당 FF 설치와 용도에 묶이며 FF API 키를 바꾸면 다시 발급해야 합니다.
 - 리버스 프록시 로그에는 요청 쿼리를 기록하지 않습니다. Nginx에서는 이 서버의 access log 형식을 `$request_method $uri $server_protocol`로 구성합니다. `$request`와 `$request_uri`에는 인증에 쓰는 쿼리 값이 들어갑니다.
 - HLS 및 MPEG-TS 연결에는 각각 동시 상한과 원본 응답 대기 한도가 적용됩니다. 기존 동시 상한 `0`은 4로 처리됩니다.
+- FF의 Python이 Pillow 13을 지원하지 않는 환경에서는 Pillow 13이 설치된 별도 Python의 절대 경로를 `TVH_M3U_LOGO_PYTHON`에 지정할 수 있습니다. 로고 검증은 해당 프로세스에서 실행됩니다.
