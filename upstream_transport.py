@@ -11,12 +11,12 @@ READ_TIMEOUT = 20
 STREAM_TIMEOUT = (CONNECT_TIMEOUT, READ_TIMEOUT)
 
 
-def validate_upstream(url):
+def validate_upstream(url, *, allow_public_http=False):
     parts = urlsplit(url)
     host = parts.hostname
     if parts.scheme not in ('http', 'https') or not host or parts.username is not None:
         raise requests.exceptions.InvalidURL('TVH/EPG 주소에는 HTTP(S)와 별도 인증 설정을 사용하세요.')
-    if parts.scheme == 'http':
+    if parts.scheme == 'http' and not allow_public_http:
         try:
             addresses = {ipaddress.ip_address(x[4][0].split('%')[0])
                          for x in socket.getaddrinfo(host, parts.port or 80, type=socket.SOCK_STREAM)}
@@ -28,12 +28,13 @@ def validate_upstream(url):
 
 
 class VerifiedSession(requests.Session):
-    def __init__(self):
+    def __init__(self, *, allow_public_http=False):
         super().__init__()
         self.trust_env = False
+        self.allow_public_http = allow_public_http
 
     def request(self, method, url, **kwargs):
-        validate_upstream(url)
+        validate_upstream(url, allow_public_http=self.allow_public_http)
         kwargs['allow_redirects'] = False
         kwargs['verify'] = os.environ.get('TVH_M3U_CA_BUNDLE') or True
         kwargs.setdefault('timeout', STREAM_TIMEOUT)

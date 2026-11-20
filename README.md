@@ -20,7 +20,7 @@ TVHeadend 채널을 M3U로 만들고 Shyni에는 HLS 프록시 주소로 제공�
 
 ### 2.1.4 재생 연결 변경
 
-- 업데이트 전 외부 TVHeadend API·스트림과 EPG의 주소를 신뢰할 수 있는 HTTPS로 구성합니다. 내부망 TVHeadend에는 HTTP를 사용할 수 있습니다. 인증서가 사설 CA로 발급됐다면 FF 컨테이너의 `TVH_M3U_CA_BUNDLE`에 신뢰할 CA 번들 파일 경로를 지정합니다. TVH API·스트림과 XMLTV 다운로드는 인증서를 검증하고 리다이렉트를 따라가지 않습니다.
+- 기존 TVHeadend HTTP 주소와 설정을 사용할 수 있습니다. 외부 HTTP에서는 FF와 TVHeadend 사이의 계정 및 영상 데이터가 암호화되지 않습니다. HTTPS TVHeadend와 XMLTV에는 인증서 검증을 적용합니다. 인증서가 사설 CA로 발급됐다면 FF 컨테이너의 `TVH_M3U_CA_BUNDLE`에 신뢰할 CA 번들 파일 경로를 지정합니다. TVH API·스트림과 XMLTV 다운로드는 인증서를 검증하고 리다이렉트를 따라가지 않습니다.
 - API 메뉴에 표시되는 주소를 사용하면 FF 공통 API 키와 TVHeadend 계정이 재생 URL에 포함되지 않습니다. 새 M3U에서 TiviMate·TVH는 MPEG-TS 중계, Shyni는 HLS 중계를 사용합니다. 기존 M3U 주소도 목록을 다시 동기화하면 서명된 채널 URL을 제공합니다. ALIVE 고정주소는 새 YAML을 복사해 적용합니다. 재생 링크는 해당 FF 설치와 용도에 묶이며 FF API 키를 바꾸면 다시 발급해야 합니다.
 - 리버스 프록시 로그에는 요청 쿼리를 기록하지 않습니다. Nginx에서는 이 서버의 access log 형식을 `$request_method $uri $server_protocol`로 구성합니다. `$request`와 `$request_uri`에는 인증에 쓰는 쿼리 값이 들어갑니다.
 - HLS 및 MPEG-TS 연결에는 각각 동시 상한과 원본 응답 대기 한도가 적용됩니다. 기존 동시 상한 `0`은 4로 처리됩니다.

@@ -9,7 +9,7 @@ from .setup import *
 class TaskBase:
     @staticmethod
     def _build_session(username='', password=''):
-        session = VerifiedSession()
+        session = VerifiedSession(allow_public_http=True)
 
         if username and password:
             session.auth = (username, password)

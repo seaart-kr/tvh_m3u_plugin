@@ -15,7 +15,7 @@ from .upstream_transport import VerifiedSession
 
 def _feed_stream(process, url, username, password):
     try:
-        with VerifiedSession() as session:
+        with VerifiedSession(allow_public_http=True) as session:
             if username and password:
                 session.auth = (username, password)
             with session.get(url, stream=True) as upstream:

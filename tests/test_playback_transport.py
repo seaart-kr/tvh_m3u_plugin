@@ -57,6 +57,10 @@ class PlaybackTransportTest(unittest.TestCase):
         with self.assertRaises(requests.exceptions.InvalidURL):
             transport.validate_upstream('http://8.8.8.8/')
         self.assertEqual(transport.validate_upstream('http://127.0.0.1/'), 'http://127.0.0.1/')
+        with patch.object(requests.Session, 'request') as http:
+            with transport.VerifiedSession(allow_public_http=True) as session:
+                session.get('http://8.8.8.8/')
+            self.assertEqual(http.call_args.args, ('GET', 'http://8.8.8.8/'))
 
     def test_slots_release_when_connection_closes(self):
         with tempfile.TemporaryDirectory() as temp:
